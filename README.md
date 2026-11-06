@@ -4,7 +4,7 @@ This repository is the Corresponding Source, in the GPL-3.0 sense, for one gener
 
 | file | ships in | what it is |
 | --- | --- | --- |
-| `OpenSources.lua` | the ItemTree addon's `ItemTree_Data` folder | quest, item, creature and object ids and numbers for WoW Forever, from one pinned commit of QuestieDB |
+| `OpenSources.lua` | the ItemTree addon's `ItemTree_Data` folder | quest, item, creature and object ids and numbers, and the names of the objects they name, for WoW Forever, from one pinned commit of QuestieDB |
 
 `OpenSources.lua` holds data derived from the pinned commit of
 [QuestieDB](https://github.com/Questie/QuestieDB) alone, so it is distributed under the GNU General
@@ -23,8 +23,8 @@ the Questie name and logo, which are the Questie project's.
 
 > Open source quest and world data for WoW Forever, derived from QuestieDB
 > (github.com/Questie/QuestieDB), the Questie project's database, at commit
-> a37877c1490027ee48e5722bf602adf34f95a6dc (v1.0.10). Ids and numbers only: which creature, object or
-> item starts, ends or asks for a quest, a quest's levels, sides, classes and chain, which creature
+> a37877c1490027ee48e5722bf602adf34f95a6dc (v1.0.10). Ids and numbers, and the names of the objects
+> they name: which creature, object or item starts, ends or asks for a quest, a quest's levels, sides, classes and chain, which creature
 > or object drops an item, which creature sells it, which quest rewards it, and where creatures and
 > objects stand (the upstream's own zone ids and map percentages). WoW Forever may differ; the addon
 > shows these as predicted.

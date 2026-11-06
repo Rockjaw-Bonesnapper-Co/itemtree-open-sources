@@ -29,7 +29,8 @@ loot rows' `comments`, not quest text, not gossip, not scripts.
 
 Since 2026-09-27 (brief T1, on the owner's ruling of 2026-09-27) two more columns of
 `creature_template` are read, for the vendors and the quest givers and enders the table already
-names and no other creature: `SubName`, the short title under a name such as "Cooking Supplies",
+names and no other creature (since then the trainers: P6a and TR6 below; and brief WM1, on the owner's
+word of 2026-11-05, the weapon masters): `SubName`, the short title under a name such as "Cooking Supplies",
 which is a title and not prose, shipped in `st` so a vendor row can say where to look; and
 `Faction`, a FactionTemplate id, which the caller reduces through a client build's own
 `FactionTemplate` and `Faction` tables to one number (1 Alliance, 2 Horde, 3 both) on its own side
@@ -131,6 +132,15 @@ that teaches, that the `creature` table spawns and whose TrainerType is a class 
 trainer's ships as a name of its own, with its kind, portrait, title and id (and its side and pins
 in the caller's EraPlaces.lua), so a player can find their class trainer. Its spells stay cut: such
 a name gets no `tr`. A CMaNGOS rule alone; nothing of the caller's chooses these names.
+
+Since brief WM1 (the owner's word of 2026-11-05, on a Horde hunter's weapon master search: "We seem to
+be low on weapon masters/weapon trainers", "and not great location data either", "Do this fix now") one
+more class of names joins the T1 rule above that said "no other creature": a creature whose `SubName`
+is "Weapon Master", that teaches and that the `creature` table spawns ships as a name of its own, with
+its kind, portrait, title and id (and its side and pins in the caller's EraPlaces.lua), so a player can
+find a weapon master. No new column is read: the name, `SubName`, `Faction` and the spawns, all read
+already. What they teach stays cut: such a name gets no `tr`, since a weapon skill is on no profession
+line. A CMaNGOS rule alone; nothing of the caller's chooses these names. See weapon_masters.
 
 Since brief CT1 (the owner, 2026-10-17: "Let's queue to add the teaches spells for the next
 release") those class trainers' spells ship after all, but in a shape of their own, `tc`, rather
@@ -627,6 +637,13 @@ TRAINER_TYPE_MOUNTS = 1
 TRAINER_TYPE_TRADESKILLS = 2
 TRAINER_TYPE_PETS = 3
 PLACED_TRAINER_TYPES = frozenset({TRAINER_TYPE_CLASS, TRAINER_TYPE_PETS})
+
+# Brief WM1 (the owner's word of 2026-11-05: "We seem to be low on weapon masters/weapon trainers"): the
+# `creature_template.SubName` that makes a creature which teaches and stands somewhere a weapon master.
+# Every one of them is TrainerType 2, as the profession trainers are, and teaches only weapon skills, on
+# no profession line, so neither of the two rules above lists them. Whole and exact: the "Weaponsmith",
+# "Weapon Merchant" and "Weapons Quartermaster" titles are vendors'.
+WEAPON_MASTER_TITLE = "Weapon Master"
 
 # Brief CT1 (the owner, 2026-10-17: "Let's queue to add the teaches spells for the next release"):
 # `tc`, the class spells a class trainer NAME teaches, which the P6a cut keeps out of `tr`. Each
@@ -3065,7 +3082,8 @@ def _creature_kinds(
     all of them: a name that covers levels 11 to 14 and 36 to 40 covers 11 to 40.
 
     Ids and numbers only. `SubName` is not read here. Since 2026-09-27, on the owner's ruling of
-    that day, it is read for vendors and quest givers alone and ships in `st`: see _titles.
+    that day, it is read for vendors and quest givers alone and ships in `st`: see _titles (and for the
+    trainers since, and the weapon masters since the owner's word of 2026-11-05: weapon_masters).
     """
     by_name: dict[str, list[CreatureFacts]] = defaultdict(list)
     for creature_id in sorted(era_input.creatures):
@@ -3617,7 +3635,9 @@ def _titles(
     trainers: Collection[int] = (),
 ) -> dict[int, int]:
     """Brief T1: a vendor, trainer or quest giver NAME's index into `s` -> its SubName's index into
-    `s`, for the names given and no other.
+    `s`, for the names given and no other. Brief WM1 adds the weapon masters to the names derive gives
+    it, on the owner's word of 2026-11-05 ("We seem to be low on weapon masters/weapon trainers", "Do
+    this fix now"): see weapon_masters.
 
     Keyed by the name, the way `ck` and `qg` are. Among the creatures that speak for a name
     (speaking_creatures) the commonest non empty SubName wins, ties by the lowest creature id.
@@ -3794,6 +3814,40 @@ def class_trainers(
     return names, ids
 
 
+def weapon_masters(
+    era_input: CmangosFacts, counts: dict[str, int], dropped: dict[str, int]
+) -> tuple[set[str], set[int]]:
+    """Brief WM1 (the owner's word of 2026-11-05): the weapon master NAMES the table lists for their
+    place alone, and the creature ids behind them.
+
+    A creature counts where its `SubName` is WEAPON_MASTER_TITLE, it teaches at least one spell (its own
+    `npc_trainer` rows or its template's) and the `creature` table spawns it, since a name with nowhere
+    to stand adds nothing a player can find. That leaves out the two template rows that carry the title
+    and teach nothing. A creature with no name or a scaffolding one is left out. None of these names
+    gets a `tr` list: a weapon skill is on no profession line, so _trainer_lists cuts all of it; the name
+    gets its kind, portrait, title and id here and its side and pins on the caller's side, by the rules
+    every other name follows. Nothing of the caller's chooses these names.
+    """
+    spawned = spawned_creatures(era_input)
+    names: set[str] = set()
+    ids: set[int] = set()
+    for creature, spells in trainer_creature_spells(era_input).items():
+        facts = era_input.creatures.get(creature)
+        if facts is None or facts.subname != WEAPON_MASTER_TITLE or not spells:
+            continue
+        if not facts.name or is_scaffolding(facts.name):
+            dropped["weaponMasterUnnamed"] += 1
+            continue
+        if creature not in spawned:
+            dropped["weaponMasterNotSpawned"] += 1
+            continue
+        names.add(facts.name)
+        ids.add(creature)
+    counts["weaponMasterNames"] = len(names)
+    counts["weaponMasterCreatures"] = len(ids)
+    return names, ids
+
+
 def trainer_creature_terms(era_input: CmangosFacts) -> dict[int, dict[int, tuple[int, int]]]:
     """Brief CT1: creature id -> taught spell id -> (level, price), the level the trainer asks and
     the price in copper.
@@ -3933,6 +3987,8 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         "classTrainerUnnamed": 0,
         "classTrainerNotSpawned": 0,
         "classTrainerNoClass": 0,
+        "weaponMasterUnnamed": 0,
+        "weaponMasterNotSpawned": 0,
         "questRequiresNotShipped": 0,
         "questRequiresScaffolding": 0,
         "questProvidedUntitled": 0,
@@ -4039,7 +4095,9 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
     # Brief TR6 (the owner's ruling of 2026-10-13): the class and pet trainers join as names of their
     # own, so a class trainer has a page with a portrait, a title, a side and its pins. No `tr`.
     class_trainer_names, class_teachers = class_trainers(era_input, counts, dropped)
-    teachers = teachers | class_teachers
+    # Brief WM1 (the owner's word of 2026-11-05): and the weapon masters, by the same shape. No `tr`.
+    weapon_master_names, weapon_teachers = weapon_masters(era_input, counts, dropped)
+    teachers = teachers | class_teachers | weapon_teachers
     counts["classTrainerNamesNew"] = len(class_trainer_names - trainer_names)
     # Brief CT1 (the owner, 2026-10-17): and the class spells each of those names teaches, by level,
     # with its price, one list per distinct list (`tc`).
@@ -4050,7 +4108,14 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
     # of its own, with its kind, portrait, title and quest lists, even where it drops, sells and
     # trains nothing. Its kind stays a plain kind: `qg` is what says it gives quests.
     giver_names = _giver_names(era_input)
-    npc_names = creature_names | vendor_names | trainer_names | class_trainer_names | giver_names
+    npc_names = (
+        creature_names
+        | vendor_names
+        | trainer_names
+        | class_trainer_names
+        | weapon_master_names
+        | giver_names
+    )
     kinds = _creature_kinds(era_input, npc_names, strings, counts)
     for index in kinds:
         name = strings.value(index)
@@ -4092,9 +4157,14 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
     )
     # Brief T1, the owner's ruling of 2026-09-27: the title under the name, for the vendors and
     # the quest givers and enders the table names, and no other creature (the caller's side for
-    # the same names, EraPlaces.lua's `cf`, is read by the same speaking_creatures rule).
+    # the same names, EraPlaces.lua's `cf`, is read by the same speaking_creatures rule). Since then
+    # the trainers, and (brief WM1, the owner's word of 2026-11-05) the weapon masters.
     titled_names = (
-        vendor_names | trainer_names | class_trainer_names | {strings.value(index) for index in givers}
+        vendor_names
+        | trainer_names
+        | class_trainer_names
+        | weapon_master_names
+        | {strings.value(index) for index in givers}
     )
     subnames = _titles(era_input, titled_names, strings, counts, teachers)
     trainers = {strings.add(name): spells for name, spells in trainer_lists.items()}
@@ -4247,6 +4317,7 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         "vendor": frozenset(index_of[name] for name in vendor_names),
         "trainer": frozenset(index_of[name] for name in trainer_names),
         "classTrainer": frozenset(index_of[name] for name in class_trainer_names),
+        "weaponMaster": frozenset(index_of[name] for name in weapon_master_names),
         "giver": frozenset(index_of[name] for name in giver_names),
         # Brief EO1: the world objects og carries, for the caller's object pins (EraPlaces.lua op).
         "objectGiver": frozenset(index_of[name] for name in object_giver_names),

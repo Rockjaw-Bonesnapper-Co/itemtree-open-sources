@@ -4,8 +4,9 @@
 --[[
 The composer behind OpenSources.lua (brief QZ2). It applies the pinned upstream database's Forever
 layers over its base, in that database's own load order, and remembers which layer stated each
-fact, then writes the few fields the file keeps as numbers. open_sources.py runs it (compose());
-nothing else should.
+fact, then writes the few fields the file keeps: numbers, and an object's name in hexadecimal (brief
+FFP, the owner's word of 2026-11-05 on item 465). open_sources.py runs it (compose()); nothing else
+should.
 
 Lua 5.4 only (it checks _VERSION first): it relies on 64 bit integers (a race mask uses bits 32
 and 33), integer division and the bitwise operators.
@@ -17,7 +18,7 @@ require, dofile, loadfile, load, debug, package, string, pcall, setmetatable or 
 While upstream code runs, the strings' shared metatable answers no method at all (so no
 ("").dump), and a count hook stops it after a fixed number of instructions or past a memory
 ceiling. Any error, upstream or ours, ends the run with a non zero exit: it fails closed. The
-text in the files is data, never instructions: nothing of it is printed but the numbers below.
+text in the files is data, never instructions: nothing of it is printed but the lines below.
 
 Protocol (open_sources.compose writes stdin and reads stdout):
   arg[1]  the layers to leave out, comma separated, or "-" for none.
@@ -32,8 +33,10 @@ Protocol (open_sources.compose writes stdin and reads stdout):
                                                                     options "-" for none)
           Then "<count>\n", then per file "<path>\n<byte length>\n<bytes>": exactly the files the
           plan names, already checked against the pin's content hash by the caller.
-  stdout  one tab separated line per projected value, numbers only:
+  stdout  one tab separated line per projected value, numbers only but for T's hexadecimal:
             S <entity> <id> <field> <value> <mask>          a scalar field
+            T <entity> <id> <field> <hex> <mask>            a name, its bytes in hexadecimal, so no
+                                                            byte of it can end or split a line
             L <entity> <id> <field> <value> <mask>          one element of a list field, in order
             G <entity> <id> <field> <group> <value> <mask>  one element of a grouped field
             P <entity> <id> <zone> <x> <y> <mask>           one spawn point
@@ -294,7 +297,7 @@ local SCHEMA = {
     questRewards = "idarray",
     startQuest = false,
   },
-  Object = { spawns = "spawnlist", zoneID = false },
+  Object = { spawns = "spawnlist", zoneID = false, name = false },
 }
 for _, entity in ipairs(ENTITIES) do
   local meta = META[entity]
@@ -756,8 +759,10 @@ for _, provider in ipairs(PROVIDERS) do
   end
 end
 
--------------------------------------------------------------------------------- out: numbers only
--- The fields OpenSources.lua is made from, by the upstream meta names. Nothing else leaves.
+-------------------------------------------------------------------------------- out: numbers and an object's name
+-- The fields OpenSources.lua is made from, by the upstream meta names. Nothing else leaves. Only an
+-- object's name is text (brief FFP, item 466), and it leaves as hexadecimal; open_sources.py decides
+-- whether the file keeps it.
 local PROJECT = {
   Quest = {
     scalar = { "sourceItemId", "questLevel", "requiredLevel", "requiredRaces", "requiredClasses", "nextQuestInChain" },
@@ -766,9 +771,19 @@ local PROJECT = {
   },
   Npc = { scalar = { "npcFlags", "minLevel", "maxLevel", "zoneID" }, side = "friendlyToFaction", spawns = "spawns" },
   Item = { scalar = { "startQuest" }, list = { "npcDrops", "objectDrops", "itemDrops", "vendors", "questRewards" } },
-  Object = { scalar = { "zoneID" }, spawns = "spawns" },
+  Object = { scalar = { "zoneID" }, spawns = "spawns", text = "name" },
 }
 local SIDES = { A = 1, H = 2, AH = 3 }
+-- Longer than any name in the upstream: left unwritten, so the file keeps the object's number.
+local MAX_TEXT = 128
+
+local function hex(text)
+  local digits = {}
+  for at = 1, #text do
+    digits[at] = sformat("%02x", sbyte(text, at))
+  end
+  return tconcat(digits)
+end
 
 local out = {}
 
@@ -844,6 +859,16 @@ for _, entity in ipairs(ENTITIES) do
             end
           end
         end
+      end
+    end
+    if project.text then
+      local field = index[project.text]
+      local value = field and row[field]
+      if type(value) == "string" and #value <= MAX_TEXT then
+        local mask = origins[field] and origins[field].m or 0
+        out[#out + 1] = tconcat({
+          "T", entity, sformat("%d", id), project.text, hex(value), sformat("%d", mask),
+        }, "\t")
       end
     end
     if project.side then

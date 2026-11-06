@@ -16,7 +16,7 @@ in this repository.
   which creature, object or item starts, ends or asks for a quest, a quest's levels, race and class
   masks and chain links, which creature or object drops an item, which creature sells it, which quest
   rewards it, creature and object spawn points (its own zone ids and map percentages), creature
-  levels, flags and sides.
+  levels, flags and sides, and the names of the objects those facts name.
 - **CMaNGOS Classic content database**, [cmangos/classic-db](https://github.com/cmangos/classic-db),
   the lineage of QuestieDB's Classic base by the Questie project's own record. Licensed under the
   GNU General Public License version 3. Its licence and its copyright notice are vendored verbatim at
@@ -39,8 +39,9 @@ scripts are exactly these files:
 - `itemtree_open_sources/luaout.py`, the writer that produces the .lua bytes
 
 with the pinned input listed in `README.md`. The derived file is a modified, reduced derivation of
-QuestieDB: a selection (the layers and the key set its header names; no names, quest text, drop
-rates, waypoints, comments or addresses), a composition (QuestieDB's Forever correction layers
+QuestieDB: a selection (the layers and the key set its header names; of its text only the names of
+the objects these facts name: no other names, and no quest text, drop rates, waypoints, comments or
+addresses), a composition (QuestieDB's Forever correction layers
 applied over its base, in its own order) and a re-keying (each fact under short keys, packed), as
 its own header and the compiler's docstrings describe. The upstream notices are vendored under
 `third_party/`, and this repository is licensed under GPL-3.0 (`LICENSE`).

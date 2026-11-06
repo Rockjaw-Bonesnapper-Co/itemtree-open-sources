@@ -31,16 +31,21 @@ How the file is made:
    string.dump, pcall or setmetatable, an instruction limit and a memory ceiling) and applies the
    upstream database's Forever layers over its base in the upstream's own order: LAYERS. Each
    value remembers every layer that stated it while it stood; the lowest is its FIRST ORIGIN. The
-   composer writes the few fields this file keeps, as numbers only: no name, text, comment, drop
-   rate or waypoint leaves it, and nothing of the upstream text is ever run outside the sandbox.
+   composer writes the few fields this file keeps, as numbers, and an object's name (hexadecimal, so
+   no byte of it can end a line): no other name, no text, comment, drop rate or waypoint leaves it,
+   and nothing of the upstream text is ever run outside the sandbox.
 3. The selection. `select_facts` keeps the facts whose first origin is in the layer set (LAYER_SETS;
    the shipped one is SHIPPED_LAYER_SET) under the minimal key set (ids and numbers only, KEYS):
    items d o c v r s, quests g G I e E n p l m x k N P, creatures s f l L z a, objects s z. A
-   creature drop list longer than MASS_DROPPERS is a world drop and is left out whole.
+   creature drop list longer than MASS_DROPPERS is a world drop and is left out whole. Brief FFP (the
+   owner's item 466): beside the facts, `object_names` keeps the upstream's English name of every
+   object the kept facts name, whichever layer stated it, a label and no fact; a missing name or a
+   placeholder is left out and counted, and the addon keeps the object's number for that row.
 4. The file. `pack_selection` packs each record into one string (the packed format below) and `module_text`
    writes OpenSources.lua: the header through the one GPL helper (era_sources.gpl_licence_lines),
    the value checked against the key allow list, and no address but the Corresponding Source. The
-   value carries its own pin (brief QZ6): `u` the upstream commit and `L` the layer set.
+   value carries its own pin (brief QZ6): `u` the upstream commit and `L` the layer set; and the
+   object names (brief FFP): `on`.
 
 The upstream's zone ids (its own area ids) and its map coordinates (percent of its zone's map, one
 decimal) ship as they are: mapping them onto a game client's maps needs that client's tables, so it
@@ -60,7 +65,14 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from .era_sources import CMANGOS_COPYRIGHT, PACK_BASE, gpl_licence_lines, pack_int, unpack_int
+from .era_sources import (
+    CMANGOS_COPYRIGHT,
+    PACK_BASE,
+    gpl_licence_lines,
+    is_scaffolding,
+    pack_int,
+    unpack_int,
+)
 from .luaout import lua_module, lua_value
 
 MODULE_NAME = "OpenSources"
@@ -1119,9 +1131,11 @@ PROJECTED: dict[str, dict[str, frozenset[str]]] = {
         "S": frozenset({"startQuest"}),
         "L": frozenset({"npcDrops", "objectDrops", "itemDrops", "vendors", "questRewards"}),
     },
-    "Object": {"S": frozenset({"zoneID"}), "P": frozenset()},
+    "Object": {"S": frozenset({"zoneID"}), "P": frozenset(), "T": frozenset({"name"})},
 }
 _INT = re.compile(r"^-?[0-9]{1,20}$")
+# A name as the composer writes one: its bytes in hexadecimal, at most its MAX_TEXT of them.
+_HEX = re.compile(r"^(?:[0-9a-f]{2}){0,128}$")
 _FLOAT = re.compile(r"^-?[0-9]{1,20}(?:\.[0-9]{1,20})?(?:e[-+]?[0-9]{1,3})?$")
 
 
@@ -1164,6 +1178,8 @@ class Row:
     groups: dict[tuple[str, int], list[tuple[int | float, int]]] = field(default_factory=dict)
     # (zone, x, y, mask), zones ascending, each zone's points in the upstream's order.
     points: list[tuple[int, int | float, int | float, int]] = field(default_factory=list)
+    # Brief FFP: a name as the composer wrote it, decoded and unchecked (object_name_fault checks it).
+    texts: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1229,7 +1245,7 @@ def parse_composed(text: bytes, paths: Iterable[str] | None = None) -> Composed:
                 raise OpenSourcesError(f"the composer wrote a bad count ({number})")
             stats.append(LayerStat(parts[1], parts[2], *counts))
             continue
-        widths = {"S": 6, "L": 6, "G": 7, "P": 7}
+        widths = {"S": 6, "L": 6, "G": 7, "P": 7, "T": 6}
         if kind not in widths or len(parts) != widths[kind] or parts[1] not in ENTITIES:
             raise OpenSourcesError(f"the composer wrote a line this reader does not know ({number})")
         entity = parts[1]
@@ -1243,7 +1259,11 @@ def parse_composed(text: bytes, paths: Iterable[str] | None = None) -> Composed:
         if kind == "P" and "P" not in allowed:
             raise OpenSourcesError(f"the composer wrote spawns for {entity} ({number})")
         row = rows[entity].setdefault(ident, Row())
-        if kind == "S":
+        if kind == "T":
+            if not _HEX.match(parts[4]) or parts[3] in row.texts:
+                raise OpenSourcesError(f"the composer wrote a name this reader does not take ({number})")
+            row.texts[parts[3]] = bytes.fromhex(parts[4]).decode("utf-8", "replace")
+        elif kind == "S":
             if parts[3] in row.scalars:
                 raise OpenSourcesError(f"the composer wrote a scalar twice ({number})")
             row.scalars[parts[3]] = (_number(parts[4], number), mask)
@@ -1383,7 +1403,9 @@ class Selection:
     list (n and o, key s) a list of (zone, ((x10, y10), ...)) in tenths of a map percent. `facts` is
     QZ0's fact count (one per list element, scalar and spawn list), `origins` counts the kept values
     by first origin, `left_out` what the rules dropped, `fact_layers` each fact's first origin (for
-    a spawn list, the lowest of its points'; a re-pin's change report reads it)."""
+    a spawn list, the lowest of its points'; a re-pin's change report reads it). Brief FFP:
+    `object_names` the name of each object the kept facts name, no fact and in none of the counts
+    above, and `names_left_out` why the others have none, by NAME_FAULTS."""
 
     layer_set: str
     records: dict[str, dict[int, dict[str, object]]]
@@ -1391,10 +1413,58 @@ class Selection:
     origins: dict[str, int]
     left_out: dict[str, int]
     fact_layers: dict[tuple, str] = field(default_factory=dict)
+    object_names: dict[int, str] = field(default_factory=dict)
+    names_left_out: dict[str, int] = field(default_factory=dict)
 
 
 def _tenths(value: int | float) -> int:
     return int(round(round(value, 1) * 10))
+
+
+# Brief FFP: why an object keeps its number for a name. What a name may hold: plain English text, the
+# letters, digits and marks of a world object's label, and nothing that could read as an address. DND
+# marks a row the client never shows ("Corrupted Moonwell Spell Focus (DND)"), the one such mark the
+# shared test row markers do not hold at this pin.
+NAME_MISSING, NAME_PLACEHOLDER, NAME_NOT_PLAIN = "missing", "placeholder", "not plain text"
+_OBJECT_NAME = re.compile(r"^[A-Za-z0-9\"][A-Za-z0-9 '\"\-,.:!&()/]{0,127}$")
+_NAME_PLACEHOLDER_MARK = re.compile(r"\bDND\b")
+
+
+def object_name_fault(name: str) -> str | None:
+    """Why the file keeps no name for an object the upstream calls `name`, or None where it does."""
+    if not name.strip():
+        return NAME_MISSING
+    if is_scaffolding(name) or _NAME_PLACEHOLDER_MARK.search(name):
+        return NAME_PLACEHOLDER
+    if not _OBJECT_NAME.match(name) or _URL.search(name) or _HOST.search(name):
+        return NAME_NOT_PLAIN
+    return None
+
+
+def object_names(
+    composed: Composed, records: Mapping[str, Mapping[int, Mapping[str, object]]]
+) -> tuple[dict[int, str], dict[str, int]]:
+    """Brief FFP (the owner's item 466, "A add in next release"): the upstream's name of each object the
+    kept records name (a row of `o`, an item's `o`, a quest's `G` and `E`), whichever layer stated it,
+    so a row the file gives reads as its container and not as a number; and how many have none, by why.
+    The file's own records choose: nothing of ours does."""
+    named: set[int] = set(records["o"])
+    for record in records["i"].values():
+        named.update(record.get("o", ()))  # type: ignore[arg-type]
+    for record in records["q"].values():
+        for key in ("G", "E"):
+            named.update(record.get(key, ()))  # type: ignore[arg-type]
+    names: dict[int, str] = {}
+    left: Counter[str] = Counter()
+    for obj in sorted(named):
+        row = composed.rows["Object"].get(obj)
+        text = row.texts.get("name", "") if row is not None else ""
+        fault = object_name_fault(text)
+        if fault is None:
+            names[obj] = text
+        else:
+            left[fault] += 1
+    return names, dict(left)
 
 
 def select_facts(composed: Composed, layer_set: str) -> Selection:
@@ -1516,7 +1586,17 @@ def select_facts(composed: Composed, layer_set: str) -> Selection:
             layers["z"] = origin(held[1])
         _keep(records["o"], facts, fact_layers, "o", obj, record, layers)
 
-    return Selection(layer_set, records, frozenset(facts), dict(origins), dict(left_out), fact_layers)
+    names, names_left = object_names(composed, records)
+    return Selection(
+        layer_set,
+        records,
+        frozenset(facts),
+        dict(origins),
+        dict(left_out),
+        fact_layers,
+        object_names=names,
+        names_left_out=names_left,
+    )
 
 
 def _keep(
@@ -1597,7 +1677,14 @@ XY = "xy"
 # addon. Both are the build's own inputs, so the file stays a pure function of the pin and the layer set.
 PIN_FIELD = "u"
 LAYERS_FIELD = "L"
-TOP_FIELDS = frozenset({"v", PIN_FIELD, LAYERS_FIELD, "legend", "signed", "i", "q", "n", "o"})
+# Brief FFP, the one key added to this allow list since QZ6: `on`, object id -> the upstream's English
+# name, so "Object 423901" reads as its container. The owner, 2026-11-05, on his item 465 (QZ11 "Seems
+# fine except container is not named"): "A add in next release", approving the extra key on this list
+# (item 466). Objects alone: no other name, and no text of any other kind.
+OBJECT_NAMES_FIELD = "on"
+TOP_FIELDS = frozenset(
+    {"v", PIN_FIELD, LAYERS_FIELD, "legend", "signed", "i", "q", "n", "o", OBJECT_NAMES_FIELD}
+)
 # A commit id as the pin states one (Pin's own check): 40 lower case letters and digits.
 _COMMIT = re.compile(r"^[0-9a-z]{40}$")
 
@@ -1714,8 +1801,8 @@ def unpack_record(letter: str, text: str, legend: Mapping, signed: Mapping) -> d
 def pack_selection(
     selection: Selection, *, commit: str | None = None, layer_set: str | None = None
 ) -> dict[str, object]:
-    """The module's value: { v, u, L, legend, signed, i, q, n, o }; u (the upstream commit) and L (the
-    layer set) where given, which `build` always gives (brief QZ6)."""
+    """The module's value: { v, u, L, legend, signed, i, q, n, o, on }; u (the upstream commit) and L (the
+    layer set) where given, which `build` always gives (brief QZ6); on the object names (brief FFP)."""
     legend, signed = legend_of(selection)
     value: dict[str, object] = {"v": FORMAT_VERSION, "legend": legend, "signed": signed}
     if commit is not None:
@@ -1727,6 +1814,7 @@ def pack_selection(
             ident: pack_record(letter, record, legend, signed)
             for ident, record in sorted(selection.records[letter].items())
         }
+    value[OBJECT_NAMES_FIELD] = dict(sorted(selection.object_names.items()))
     return value
 
 
@@ -1760,6 +1848,12 @@ def check_value(value: Mapping) -> None:
                 raise GuardError(f"{letter}[{ident}] holds a byte outside the packed alphabet")
             if {segment[0] for segment in text.split(SEPARATOR)} - keys:
                 raise GuardError(f"{letter}[{ident}] holds a key outside the allow list")
+    # Brief FFP: object id -> a name that passes the rule the selection applied, nothing else.
+    for ident, name in (value.get(OBJECT_NAMES_FIELD) or {}).items():
+        if not isinstance(ident, int) or isinstance(ident, bool) or ident < 1 or not isinstance(name, str):
+            raise GuardError(f"{OBJECT_NAMES_FIELD} holds a row that is not object id to name")
+        if object_name_fault(name) is not None:
+            raise GuardError(f"{OBJECT_NAMES_FIELD}[{ident}] holds something other than a plain name")
 
 
 # ----- the build --------------------------------------------------------------------------------
@@ -1839,6 +1933,8 @@ def build(tree: UpstreamTree, *, layer_set: str, lua: str) -> OpenSources:
         "objects": len(selection.records["o"]),
         "facts": len(selection.facts),
         "plainBytes": len(plain.encode("utf-8")),
+        "objectNames": len(selection.object_names),
+        "objectNamesLeftOut": sum(selection.names_left_out.values()),
     }
     return OpenSources(
         _BUILT,
@@ -1861,7 +1957,8 @@ _STAMP = re.compile(r"^[A-Za-z0-9_.:+\-]{1,64}$")
 CREDIT = (
     f"Open source quest and world data for WoW Forever, derived from {UPSTREAM_NAME} "
     f"({UPSTREAM_REPOSITORY}), the Questie project's database, at commit {QUESTIEDB_COMMIT} "
-    f"({QUESTIEDB_VERSION}). Ids and numbers only: which creature, object or item starts, ends or "
+    f"({QUESTIEDB_VERSION}). Ids and numbers, and the names of the objects they name: which creature, "
+    "object or item starts, ends or "
     "asks for a quest, a quest's levels, sides, classes and chain, which creature or object drops "
     "an item, which creature sells it, which quest rewards it, and where creatures and objects "
     "stand (the upstream's own zone ids and map percentages). WoW Forever may differ; the addon "
@@ -1888,7 +1985,8 @@ UPSTREAM_LINEAGE = (
 MODIFICATION_NOTICE = (
     f"Modified: this file is a modified, reduced derivation of {UPSTREAM_NAME}, made by the ItemTree "
     "pipeline on the Generated date above. The changes: a selection (the layers and the key set "
-    "this header names; no names, quest text, drop rates, waypoints, comments or addresses), a "
+    "this header names; of its text only the names of the objects these facts name: no other names, "
+    "and no quest text, drop rates, waypoints, comments or addresses), a "
     "composition (the upstream's Forever correction layers applied over its base, in its own order) "
     "and a re-keying (each fact under the short keys above, packed)."
 )
@@ -1942,10 +2040,11 @@ def header_lines(table: OpenSources, *, generated: str, version: str) -> list[st
         f"Module: {MODULE_NAME} | Upstream: {table.commit} | Layers: {table.layer_set} | "
         f"Generated: {generated} | Pipeline: {version}",
         "A gap filler from one pinned open source quest database: the addon uses a fact here only "
-        "where its own data and the Classic Era files state nothing of that kind. Ids and numbers "
-        "only. docs/open-sources.md in the pipeline is the contract.",
+        "where its own data and the Classic Era files state nothing of that kind. Ids and numbers, and "
+        "the names of the objects they name. docs/open-sources.md in the pipeline is the contract.",
         f"{{ v = {FORMAT_VERSION}, {PIN_FIELD}, {LAYERS_FIELD}, legend, signed, i = {{ [itemId] = record }}, "
-        "q = { [questId] = record }, n = { [creatureId] = record }, o = { [objectId] = record } }. v is "
+        "q = { [questId] = record }, n = { [creatureId] = record }, o = { [objectId] = record }, "
+        f"{OBJECT_NAMES_FIELD} = {{ [objectId] = name }} }}. v is "
         f"the format version; refuse any other. {PIN_FIELD} is the upstream commit and {LAYERS_FIELD} the "
         "layer set this file was built from, the stamp line's own.",
         f"record: segments joined by {SEPARATOR!r}; a segment is its key letter then fixed width numbers "
@@ -1959,20 +2058,24 @@ def header_lines(table: OpenSources, *, generated: str, version: str) -> list[st
         "item it hands over, l level, m minimum level, x race mask (bits 32 and 33 are Forever's "
         "own races), k class mask, N next quest, P prior quests. n: s spawns, f flags (vendor 4, "
         "trainer 16), l L levels, z zone id, a side (1 Alliance, 2 Horde, 3 both). o: s spawns, z "
-        "zone id. Zone ids are the upstream's own area ids and points its own map percentages.",
+        "zone id. Zone ids are the upstream's own area ids and points its own map percentages. "
+        f"{OBJECT_NAMES_FIELD}: the upstream's English name of each object this file names (a row of o, "
+        "an item's o, a quest's G and E); a missing name or a placeholder has no row here.",
         f"Layers: {table.layer_set}, {LAYER_WORDS[table.layer_set]}. A creature drop list longer than "
         f"{MASS_DROPPERS} is a world drop and is left out whole.",
         CREDIT,
         *licence_lines(),
         f"{counts['items']} items, {counts['quests']} quests, {counts['npcs']} creatures, "
-        f"{counts['objects']} objects; {counts['facts']} facts.",
+        f"{counts['objects']} objects; {counts['facts']} facts; {counts['objectNames']} object names, "
+        f"{counts['objectNamesLeftOut']} objects with none.",
     ]
 
 
 def check_addresses(text: str) -> None:
     """No address in the file but the Corresponding Source, and no host but the upstreams' (the
     header names github.com/... without a scheme). The records hold no letters but base 91 digits,
-    so only the header is read for hosts."""
+    and check_value holds the object names to object_name_fault, which refuses a host, so only the
+    header is read for hosts."""
     for url in _URL.findall(text):
         if url.rstrip(".,;:") not in ALLOWED_URLS:
             raise GuardError("OpenSources.lua would hold an address the allow list does not")
@@ -2005,11 +2108,15 @@ def summary_lines(table: OpenSources, text: str) -> list[str]:
     selection = table.selection
     origin = ", ".join(f"{name} {selection.origins.get(name, 0)}" for name in LAYERS)
     left = ", ".join(f"{key} {count}" for key, count in sorted(selection.left_out.items())) or "none"
+    nameless = (
+        ", ".join(f"{count} {why}" for why, count in sorted(selection.names_left_out.items())) or "none"
+    )
     return [
         f"open sources: {table.layer_set} at {table.commit[:12]}: {table.counts['facts']:,} facts; "
         f"{table.counts['items']:,} items, {table.counts['quests']:,} quests, "
         f"{table.counts['npcs']:,} creatures, {table.counts['objects']:,} objects",
         f"  bytes: {raw:,} packed (the file), {table.counts['plainBytes']:,} as plain decimal records",
+        f"  object names: {table.counts['objectNames']:,}; none for {nameless}",
         f"  kept values by first origin: {origin}",
         f"  left out: {left}",
     ]
