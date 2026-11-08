@@ -99,8 +99,8 @@ UPSTREAM_REPOSITORY = "github.com/Questie/QuestieDB"
 # The pin. `itemtree-data open-sources update` rewrites these two lines, PIN.content_sha256 and
 # PIN.notices in place on a re-pin (docs/open-sources.md, "Re-pinning"): keep each on its own line
 # in this shape.
-QUESTIEDB_COMMIT = "a37877c1490027ee48e5722bf602adf34f95a6dc"
-QUESTIEDB_VERSION = "v1.0.10"
+QUESTIEDB_COMMIT = "4d31c10394b11bd133069ecf1662062cdf4d8691"
+QUESTIEDB_VERSION = "v1.0.12"
 
 # The files the composer reads are not a list of ours: they are derived from the upstream's own load
 # lists at the pinned commit (its TOC, its configuration's correction registry and its correction
@@ -134,7 +134,7 @@ PIN = Pin(
     commit=QUESTIEDB_COMMIT,
     version=QUESTIEDB_VERSION,
     archive_url=archive_url_for(QUESTIEDB_COMMIT),
-    content_sha256="8855e0b2dab9c2a45a5bad86929e4232fc142d199720cff238ad24ef6aba09e7",
+    content_sha256="93d6ee23f0ee126d9f037fc70c02e77611a5e5f83072a911892a046a20351091",
     notices=(
         ("LICENSE.md", "d9937e385c401d234ef416b91f00290f8ea8e517f39ed4359aed99115770d8c9"),
         ("gpl-3.0.md", "cc5470feed66192387f06ae93aed0bd4fefae5a5fd7c1e54a4acf4ea64f1028b"),

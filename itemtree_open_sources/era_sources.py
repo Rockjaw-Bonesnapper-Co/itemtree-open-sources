@@ -102,6 +102,18 @@ the way a `qr` one does. Every such pair ships, an item that also starts its own
 caller's addon leaves that one out where it reads `qp` (the brief's rule, which reads the client's own
 item rows and so has no place in this file).
 
+Since 2026-11-06 (brief NR17, on the owner's ruling of 2026-11-06: "Add it gpl field") two more
+`quest_template` columns are read, `RewSpell` and `RewSpellCast`, the spells a quest's reward shows and
+casts, ids only. The spell a quest casts when it is rewarded is its `RewSpellCast`, else its `RewSpell`;
+where that spell is a learn spell (spell_template's learn effect, read already for the trainers) the
+quest teaches the spell it names. They ship as `qs`, keyed by the TAUGHT spell's id, each value the
+quests that teach it packed as a `qg` list is, ids only and nothing else read: Sharing the Knowledge
+(8313) casts 24802, which teaches Smoked Desert Dumplings (24801), a recipe no item and no trainer
+teaches. Every spell a quest teaches ships, a class spell among them, so nothing of the caller's
+chooses a `qs` row (BuildFacts.profession_spells still chooses `tr` alone). Only a titled quest that is
+no scaffolding, as `qp`'s rule is; a `qs` quest nothing else titles gets its title in `qt` the way a
+`qp` one does.
+
 Since 2026-10-22 (brief EO1, on the owner's ruling "3A" of 2026-10-22) the world OBJECTS that start
 and end quests are read the same way: `gameobject_questrelation` (which object starts a quest) and
 `gameobject_involvedrelation` (which ends one), two id columns each and nothing else, so a wanted
@@ -1200,6 +1212,10 @@ class EraInput:
     # questId -> (the item the quest hands the player when it is taken, how many; a count of 0 read as
     # 1), for every entry whose SrcItemId is above 0. Ids and counts only. Shipped as `qp`.
     quest_sources: dict[int, tuple[int, int]] = field(default_factory=dict)
+    # Brief NR17 (the owner's ruling of 2026-11-06, "Add it gpl field"): quest_template's RewSpell and
+    # RewSpellCast, questId -> (the spell its reward shows, the spell it casts when rewarded), for every
+    # entry stating either above 0. Spell ids only. Read for `qs` (quest_taught_spells).
+    quest_spells: dict[int, tuple[int, int]] = field(default_factory=dict)
     # Brief NX2 (the owner's word of 2026-10-23): quest_template's RequiredCondition, questId -> the
     # `conditions` row it names, and its BreadcrumbForQuestId, questId -> the quest the breadcrumb leads
     # to, each for every entry with one above 0; and the `conditions` rows themselves, condition_entry ->
@@ -1291,6 +1307,7 @@ CMANGOS_FIELDS = frozenset(
         "object_quest_ends",
         "quest_links",
         "quest_sources",
+        "quest_spells",
         "quest_conditions",
         "quest_breadcrumbs",
         "conditions",
@@ -1463,6 +1480,10 @@ class EraSources:
     # it is taken and how many (quest_template.SrcItemId and SrcItemCount), one record packed by
     # pack_requires, as a `qr` record is. Shipped as `qp`.
     quest_provided: dict[int, str] = field(default_factory=dict)
+    # Brief NR17 (the owner's ruling of 2026-11-06): a spell a quest teaches (the learn effect of the
+    # spell its reward casts, quest_taught_spells) -> the quests that teach it, packed by pack_quests.
+    # Shipped as `qs`.
+    quest_taught: dict[int, str] = field(default_factory=dict)
     counts: dict[str, int] = field(default_factory=dict)
     dropped: dict[str, int] = field(default_factory=dict)
     # Brief EK1, for the caller that places the names (never shipped): which names the table opens
@@ -1538,6 +1559,9 @@ class EraSources:
         # Brief NX1: the item each quest hands the player when it is taken, absent where none ships.
         if self.quest_provided:
             value["qp"] = dict(self.quest_provided)
+        # Brief NR17: the quests that teach each spell, absent where none ships.
+        if self.quest_taught:
+            value["qs"] = dict(self.quest_taught)
         if generated:
             value["g"] = generated
         check_gpl_value(value, self.blank)
@@ -1557,10 +1581,12 @@ class EraSources:
 # BreadcrumbForQuestId, on the owner's word of 2026-10-23 ("It's probably okay to add chain columns").
 # Brief NX1 adds `qp`, the item a quest hands the player when it is taken (quest_template.SrcItemId and
 # SrcItemCount), on the owner's ruling "2A" of 2026-10-22 (the Classic Era provided items).
+# Brief NR17 adds `qs`, the spells a quest teaches (quest_template.RewSpell and RewSpellCast, through
+# spell_template's learn effect), on the owner's ruling of 2026-11-06 ("Add it gpl field").
 GPL_FIELDS = frozenset(
     {
         *("s", "r", "qt", "ck", "cd", "ci", "oi", "qg", "og", "st", "tr", "tv", "tc", "qr"),
-        *("qc", "qe", "ql", "qa", "qw", "qo", "qp", "x", "xl", "g"),
+        *("qc", "qe", "ql", "qa", "qw", "qo", "qp", "qs", "x", "xl", "g"),
     }
 )
 # The keys a packed module adds beside them (pack_module).
@@ -2181,6 +2207,11 @@ def _absorb(
             source = _int(col("SrcItemId"))
             if source > 0:
                 era.quest_sources[qid] = (source, max(1, _int(col("SrcItemCount"))))
+            # Brief NR17, the owner's ruling of 2026-11-06: the spell the quest's reward shows and the
+            # spell it casts, ids only.
+            spells = (max(0, _int(col("RewSpell"))), max(0, _int(col("RewSpellCast"))))
+            if any(spells):
+                era.quest_spells[qid] = spells
             # Brief NX2, the owner's word of 2026-10-23: the condition row the quest asks to hold before
             # it can be taken, and the quest a breadcrumb leads to, ids only.
             condition = _int(col("RequiredCondition"))
@@ -3592,6 +3623,49 @@ def quest_provided(
     return out
 
 
+def quest_cast_spell(shown: int, cast: int) -> int:
+    """The spell a quest casts on the player when it is rewarded: its RewSpellCast where above 0, else
+    its RewSpell (the spell the reward shows). 0 for none."""
+    return cast if cast > 0 else max(0, shown)
+
+
+def quest_taught_spells(
+    era_input: CmangosFacts,
+    counts: dict[str, int],
+    dropped: dict[str, int],
+) -> dict[int, tuple[int, ...]]:
+    """spell id -> the quests that teach it, ascending (brief NR17, the owner's ruling of 2026-11-06:
+    "Add it gpl field"), out of quest_template's RewSpell and RewSpellCast and spell_template's learn
+    effect alone.
+
+    A quest teaches a spell where the spell it casts when rewarded (quest_cast_spell) is a learn spell
+    (`learned_spells`, the trainers' reading): Sharing the Knowledge (8313) casts 24802, which teaches
+    Smoked Desert Dumplings (24801). Every taught spell ships, a class spell among them: nothing of a
+    client build chooses a row. Only a quest `quest_template` titles, never one whose title is
+    scaffolding (as `qp`'s rule); a cast spell that teaches nothing (a buff, a teleport) is counted in
+    `dropped`. Spell and quest ids only. Pure."""
+    learned = era_input.learned_spells
+    taught: dict[int, set[int]] = defaultdict(set)
+    for quest_id, (shown, cast) in sorted(era_input.quest_spells.items()):
+        spell = learned.get(quest_cast_spell(shown, cast), 0)
+        if spell <= 0:
+            dropped["questSpellTeachesNothing"] += 1
+            continue
+        title = era_input.quest_names.get(quest_id, "")
+        if not title:
+            dropped["questSpellUntitled"] += 1
+            continue
+        if is_scaffolding(title):
+            dropped["questSpellScaffolding"] += 1
+            continue
+        taught[spell].add(quest_id)
+    out = {spell: tuple(sorted(quests)) for spell, quests in sorted(taught.items())}
+    counts["questTaughtSpells"] = len(out)
+    counts["questTaughtQuests"] = len({quest for quests in out.values() for quest in quests})
+    counts["questTaughtPairs"] = sum(len(quests) for quests in out.values())
+    return out
+
+
 def _vendor_creatures(era_input: CmangosFacts) -> set[int]:
     """Every creature id that sells anything, by `npc_vendor` or by a vendor template."""
     found = {offer.vendor for offer in era_input.vendor_offers}
@@ -3727,6 +3801,7 @@ def _trainer_lists(
     selected: BuildFacts,
     counts: dict[str, int],
     dropped: dict[str, int],
+    whole: Collection[int] = (),
 ) -> tuple[dict[str, tuple[int, ...]], set[int]]:
     """A trainer NAME -> the spell ids its creatures teach, ascending (brief P6a), and the ids
     of the creatures that stand behind those names.
@@ -3737,7 +3812,10 @@ def _trainer_lists(
     no spell id the client cannot name ships; a spell in BuildFacts.class_spells is refused by the
     cut and counted under `trainerSpellClass`, so a class trainer ships nothing, and any other
     under `trainerSpellUnknown`. A creature with no name, or a scaffolding one, teaches nothing
-    that ships: there is no page to open it on.
+    that ships: there is no page to open it on. Brief NR13 (QA item 512, the owner's "weapon masters
+    have no teaches" of 2026-11-06): a creature in `whole` (the weapon masters, a CMaNGOS rule alone:
+    weapon_masters) keeps every spell it teaches, weapon skills on no profession line, with nothing
+    of the caller's choosing them, counted under `weaponMasterSpells`.
     """
     lists: dict[str, set[int]] = defaultdict(set)
     teachers: set[int] = set()
@@ -3745,6 +3823,11 @@ def _trainer_lists(
         facts = era_input.creatures.get(creature)
         if facts is None or not facts.name or is_scaffolding(facts.name):
             dropped["trainerUnnamed"] += 1
+            continue
+        if creature in whole:
+            lists[facts.name] |= spells
+            teachers.add(creature)
+            counts["weaponMasterSpells"] = counts.get("weaponMasterSpells", 0) + len(spells)
             continue
         kept = spells & selected.profession_spells
         classed = sum(1 for spell in spells if spell in selected.class_spells and spell not in kept)
@@ -3823,10 +3906,10 @@ def weapon_masters(
     A creature counts where its `SubName` is WEAPON_MASTER_TITLE, it teaches at least one spell (its own
     `npc_trainer` rows or its template's) and the `creature` table spawns it, since a name with nowhere
     to stand adds nothing a player can find. That leaves out the two template rows that carry the title
-    and teach nothing. A creature with no name or a scaffolding one is left out. None of these names
-    gets a `tr` list: a weapon skill is on no profession line, so _trainer_lists cuts all of it; the name
-    gets its kind, portrait, title and id here and its side and pins on the caller's side, by the rules
-    every other name follows. Nothing of the caller's chooses these names.
+    and teach nothing. A creature with no name or a scaffolding one is left out. The name gets its kind,
+    portrait, title and id here and its side and pins on the caller's side, by the rules every other name
+    follows; brief NR13 (QA item 512): and every spell it teaches in `tr`, though a weapon skill is on no
+    profession line (_trainer_lists' `whole`). Nothing of the caller's chooses these names.
     """
     spawned = spawned_creatures(era_input)
     names: set[str] = set()
@@ -3994,6 +4077,9 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         "questProvidedUntitled": 0,
         "questProvidedScaffolding": 0,
         "questProvidedNotShipped": 0,
+        "questSpellTeachesNothing": 0,
+        "questSpellUntitled": 0,
+        "questSpellScaffolding": 0,
     }
     counts: dict[str, int] = {
         "multiQuest": 0,
@@ -4088,15 +4174,17 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
     vendor_names = _vendor_names(entries, leftovers, strings)
     # Brief P6a: a trainer's name joins them too, so a trainer's page has a portrait and a title. A
     # trainer's kind stays a plain kind: `tr` is what says it teaches.
-    trainer_lists, teachers = _trainer_lists(era_input, selected, counts, dropped)
+    # Brief WM1 (the owner's word of 2026-11-05): the weapon masters join as names of their own, by
+    # the class trainers' shape below. Brief NR13 (QA item 512): and with every spell they teach in
+    # `tr`, weapon skills on no profession line (_trainer_lists' `whole`).
+    weapon_master_names, weapon_teachers = weapon_masters(era_input, counts, dropped)
+    trainer_lists, teachers = _trainer_lists(era_input, selected, counts, dropped, weapon_teachers)
     trainer_levels = _trainer_levels(era_input, trainer_lists, teachers)
     counts["trainerLevels"] = sum(1 for levels in trainer_levels.values() for level in levels if level > 0)
     trainer_names = set(trainer_lists)
     # Brief TR6 (the owner's ruling of 2026-10-13): the class and pet trainers join as names of their
     # own, so a class trainer has a page with a portrait, a title, a side and its pins. No `tr`.
     class_trainer_names, class_teachers = class_trainers(era_input, counts, dropped)
-    # Brief WM1 (the owner's word of 2026-11-05): and the weapon masters, by the same shape. No `tr`.
-    weapon_master_names, weapon_teachers = weapon_masters(era_input, counts, dropped)
     teachers = teachers | class_teachers | weapon_teachers
     counts["classTrainerNamesNew"] = len(class_trainer_names - trainer_names)
     # Brief CT1 (the owner, 2026-10-17): and the class spells each of those names teaches, by level,
@@ -4155,6 +4243,9 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
     provided = quest_provided(
         era_input, lambda item: item in selected.items or item in withheld_ids, counts, dropped
     )
+    # Brief NR17 (the owner's ruling of 2026-11-06): the spells each kept quest teaches, the dump's
+    # rule alone. Titled with qp's quests below.
+    taught = quest_taught_spells(era_input, counts, dropped)
     # Brief T1, the owner's ruling of 2026-09-27: the title under the name, for the vendors and
     # the quest givers and enders the table names, and no other creature (the caller's side for
     # the same names, EraPlaces.lua's `cf`, is read by the same speaking_creatures rule). Since then
@@ -4226,6 +4317,22 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
             by_string += 1
     counts["questProvidedTitlesByIndex"] = by_index
     counts["questProvidedTitlesByString"] = by_string
+    # Brief NR17: a qs quest nothing above titles gets its title in qt by the same rule.
+    by_index = 0
+    by_string = 0
+    for quest in sorted({quest for quests in taught.values() for quest in quests}):
+        if quest in handed_over or quest in quest_titles:
+            continue
+        title = era_input.quest_names[quest]
+        index = strings.find(title)
+        if index:
+            quest_titles[quest] = index
+            by_index += 1
+        else:
+            quest_titles[quest] = title
+            by_string += 1
+    counts["questTaughtTitlesByIndex"] = by_index
+    counts["questTaughtTitlesByString"] = by_string
     # Brief QN1: the quests of one chain that share a title, numbered by chain position.
     chains = quest_chains(era_input.quest_names, era_input.quest_links, era_input.quest_ids)
     agree, disagree = chains.id_order_check()
@@ -4394,6 +4501,7 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         quest_helpers=helpers,
         quest_next={quest: pack_quests(quests) for quest, quests in later.items()},
         quest_provided={quest: pack_requires([pair]) for quest, pair in sorted(provided.items())},
+        quest_taught={spell: pack_quests(quests) for spell, quests in taught.items()},
         list_index={
             item: dict(sorted(by_kind_rows.items())) for item, by_kind_rows in sorted(list_index.items())
         },
@@ -4792,6 +4900,7 @@ def header_lines(table: EraSources) -> list[str]:
         + ("qw = { [questId] = parent questId }, " if table.quest_helpers else "")
         + ("qo = { [questId] = the quests that come after it, packed }, " if table.quest_next else "")
         + ("qp = { [questId] = the item it hands over when taken, packed }, " if table.quest_provided else "")
+        + ("qs = { [spellId] = the quests that teach it, packed }, " if table.quest_taught else "")
         + "legend = { {field, type}, ... }, packed = 1, g = the Generated stamp above }",
         "r[itemId] is a LIST of rows, in the order to draw them: category ascending, best "
         "chance first inside a category, the summary row last. Never sort it. A herb or a vein "
@@ -4848,7 +4957,8 @@ def header_lines(table: EraSources) -> list[str]:
         "quests no c=3 row names anywhere in the table. A value is a NUMBER, an index into s, or "
         "(only for a qr quest whose title s does not hold) a STRING, the title itself: test the "
         "type. Titles only, and the addon reads its own quest index first."
-        + (" A qp quest is titled by the same rule as a qr one." if table.quest_provided else ""),
+        + (" A qp quest is titled by the same rule as a qr one." if table.quest_provided else "")
+        + (" A qs quest is titled by the same rule as a qr one." if table.quest_taught else ""),
         "ck: what kind of creature a NAME is, one integer per name: CreatureType + "
         f"{KIND_TYPE_SPAN} * (MinLevel + {KIND_LEVEL_SPAN} * (MaxLevel less MinLevel + "
         f"{KIND_BAND_SPAN} * beast Family)). Present for the names c=1, 6, 7 and 12 rows and "
@@ -5012,6 +5122,21 @@ def header_lines(table: EraSources) -> list[str]:
                 f"{counts.get('questProvidedTitlesByString', 0)} by string).",
             ]
             if table.quest_provided
+            else []
+        ),
+        *(
+            [
+                "qs: the quests that teach a spell, keyed by the TAUGHT spell's id: one packed string, each "
+                f"quest's id as {QG_QUEST_DIGITS} base 91 digits (as a qg list), ascending. A quest teaches "
+                "the spell named by the learn effect (spell_template) of the spell it casts when it is "
+                "rewarded: quest_template.RewSpellCast, else RewSpell. Every taught spell, a class spell "
+                "among them; a quest whose cast spell teaches nothing has no entry. Every quest here is "
+                "titled by a c=3 row or by qt. "
+                f"{counts.get('questTaughtSpells', 0)} spells, {counts.get('questTaughtQuests', 0)} quests "
+                f"({counts.get('questTaughtTitlesByIndex', 0)} titled in qt by index, "
+                f"{counts.get('questTaughtTitlesByString', 0)} by string).",
+            ]
+            if table.quest_taught
             else []
         ),
         "x, xl: the rest of the list a summary row stands for, so it can be opened and "
