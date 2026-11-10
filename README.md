@@ -24,10 +24,10 @@ the Questie name and logo, which are the Questie project's.
 > Open source quest and world data for WoW Forever, derived from QuestieDB
 > (github.com/Questie/QuestieDB), the Questie project's database, at commit
 > 4d31c10394b11bd133069ecf1662062cdf4d8691 (v1.0.12). Ids and numbers, and the names of the objects
-> they name: which creature, object or item starts, ends or asks for a quest, a quest's levels, sides, classes and chain, which creature
-> or object drops an item, which creature sells it, which quest rewards it, and where creatures and
-> objects stand (the upstream's own zone ids and map percentages). WoW Forever may differ; the addon
-> shows these as predicted.
+> they name: which creature, object or item starts, ends or asks for a quest, a quest's levels, sides,
+> classes, chain and required profession, which creature or object drops an item, which creature sells
+> it, which quest rewards it, and where creatures and objects stand (the upstream's own zone ids and
+> map percentages). WoW Forever may differ; the addon shows these as predicted.
 
 ## The upstream's licence, as it stands
 

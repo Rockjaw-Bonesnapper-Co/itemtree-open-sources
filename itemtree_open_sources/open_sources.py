@@ -40,12 +40,16 @@ How the file is made:
    creature drop list longer than MASS_DROPPERS is a world drop and is left out whole. Brief FFP (the
    owner's item 466): beside the facts, `object_names` keeps the upstream's English name of every
    object the kept facts name, whichever layer stated it, a label and no fact; a missing name or a
-   placeholder is left out and counted, and the addon keeps the object's number for that row.
+   placeholder is left out and counted, and the addon keeps the object's number for that row. Brief
+   RS1 (the owner's "yes" of 2026-11-09, item 593): beside the records, `required_skills` keeps the
+   skill line and rank a quest asks for (the upstream's requiredSkill) whose first origin is in the
+   layer set, and (0, 0) where a layer in it cleared the pair while it stood: the upstream took it
+   away.
 4. The file. `pack_selection` packs each record into one string (the packed format below) and `module_text`
    writes OpenSources.lua: the header through the one GPL helper (era_sources.gpl_licence_lines),
    the value checked against the key allow list, and no address but the Corresponding Source. The
-   value carries its own pin (brief QZ6): `u` the upstream commit and `L` the layer set; and the
-   object names (brief FFP): `on`.
+   value carries its own pin (brief QZ6): `u` the upstream commit and `L` the layer set; the
+   object names (brief FFP): `on`; and the quests' required skills (brief RS1): `rs`.
 
 The upstream's zone ids (its own area ids) and its map coordinates (percent of its zone's map, one
 decimal) ship as they are: mapping them onto a game client's maps needs that client's tables, so it
@@ -1122,6 +1126,8 @@ PROJECTED: dict[str, dict[str, frozenset[str]]] = {
         ),
         "L": frozenset({"preQuestSingle", "preQuestGroup"}),
         "G": frozenset({"startedBy", "finishedBy", "objectives"}),
+        # Brief RS1: a pair, the skill line and rank a quest asks for.
+        "R": frozenset({"requiredSkill"}),
     },
     "Npc": {
         "S": frozenset({"npcFlags", "minLevel", "maxLevel", "zoneID", "friendlyToFaction"}),
@@ -1180,6 +1186,8 @@ class Row:
     points: list[tuple[int, int | float, int | float, int]] = field(default_factory=list)
     # Brief FFP: a name as the composer wrote it, decoded and unchecked (object_name_fault checks it).
     texts: dict[str, str] = field(default_factory=dict)
+    # Brief RS1: a pair field as (first, second, mask); (0, 0, mask) where a layer cleared it.
+    pairs: dict[str, tuple[int, int, int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1245,7 +1253,7 @@ def parse_composed(text: bytes, paths: Iterable[str] | None = None) -> Composed:
                 raise OpenSourcesError(f"the composer wrote a bad count ({number})")
             stats.append(LayerStat(parts[1], parts[2], *counts))
             continue
-        widths = {"S": 6, "L": 6, "G": 7, "P": 7, "T": 6}
+        widths = {"S": 6, "L": 6, "G": 7, "P": 7, "T": 6, "R": 7}
         if kind not in widths or len(parts) != widths[kind] or parts[1] not in ENTITIES:
             raise OpenSourcesError(f"the composer wrote a line this reader does not know ({number})")
         entity = parts[1]
@@ -1263,6 +1271,18 @@ def parse_composed(text: bytes, paths: Iterable[str] | None = None) -> Composed:
             if not _HEX.match(parts[4]) or parts[3] in row.texts:
                 raise OpenSourcesError(f"the composer wrote a name this reader does not take ({number})")
             row.texts[parts[3]] = bytes.fromhex(parts[4]).decode("utf-8", "replace")
+        elif kind == "R":
+            # Brief RS1: two whole numbers, neither below 0, once per field.
+            first, second = _number(parts[4], number), _number(parts[5], number)
+            if (
+                parts[3] in row.pairs
+                or not isinstance(first, int)
+                or not isinstance(second, int)
+                or first < 0
+                or second < 0
+            ):
+                raise OpenSourcesError(f"the composer wrote a pair this reader does not take ({number})")
+            row.pairs[parts[3]] = (first, second, mask)
         elif kind == "S":
             if parts[3] in row.scalars:
                 raise OpenSourcesError(f"the composer wrote a scalar twice ({number})")
@@ -1405,7 +1425,10 @@ class Selection:
     by first origin, `left_out` what the rules dropped, `fact_layers` each fact's first origin (for
     a spawn list, the lowest of its points'; a re-pin's change report reads it). Brief FFP:
     `object_names` the name of each object the kept facts name, no fact and in none of the counts
-    above, and `names_left_out` why the others have none, by NAME_FAULTS."""
+    above, and `names_left_out` why the others have none, by NAME_FAULTS. Brief RS1: `required_skills`,
+    questId -> (skill line, rank) whose first origin is in the layer set, (0, 0) where the upstream
+    cleared the pair; each is a fact ("q", quest, REQUIRED_SKILLS_FIELD, (skill line, rank)), so the
+    counts above and a re-pin's change report hold them."""
 
     layer_set: str
     records: dict[str, dict[int, dict[str, object]]]
@@ -1415,6 +1438,7 @@ class Selection:
     fact_layers: dict[tuple, str] = field(default_factory=dict)
     object_names: dict[int, str] = field(default_factory=dict)
     names_left_out: dict[str, int] = field(default_factory=dict)
+    required_skills: dict[int, tuple[int, int]] = field(default_factory=dict)
 
 
 def _tenths(value: int | float) -> int:
@@ -1499,6 +1523,7 @@ def select_facts(composed: Composed, layer_set: str) -> Selection:
     records: dict[str, dict[int, dict[str, object]]] = {table: {} for table, _entity in TABLES}
     facts: set[tuple] = set()
     fact_layers: dict[tuple, str] = {}
+    required_skills: dict[int, tuple[int, int]] = {}
 
     def spawns(row: Row) -> tuple[list[tuple[int, tuple[tuple[int, int], ...]]], str]:
         by_zone: dict[int, list[tuple[int, int]]] = {}
@@ -1554,6 +1579,14 @@ def select_facts(composed: Composed, layer_set: str) -> Selection:
             record["P"] = [value for value, _mask in prior]
             layers["P"] = [origin(mask) for _value, mask in prior]
         _keep(records["q"], facts, fact_layers, "q", quest, record, layers)
+        # Brief RS1: the skill line and rank the quest asks for, a key of its own beside the records.
+        skill = row.pairs.get("requiredSkill")
+        if skill and take(skill[2]):
+            pair = (int(skill[0]), int(skill[1]))
+            required_skills[quest] = pair
+            fact = ("q", quest, REQUIRED_SKILLS_FIELD, pair)
+            facts.add(fact)
+            fact_layers[fact] = origin(skill[2])
 
     for npc, row in sorted(composed.rows["Npc"].items()):
         record = {}
@@ -1596,6 +1629,7 @@ def select_facts(composed: Composed, layer_set: str) -> Selection:
         fact_layers,
         object_names=names,
         names_left_out=names_left,
+        required_skills=required_skills,
     )
 
 
@@ -1682,8 +1716,16 @@ LAYERS_FIELD = "L"
 # fine except container is not named"): "A add in next release", approving the extra key on this list
 # (item 466). Objects alone: no other name, and no text of any other kind.
 OBJECT_NAMES_FIELD = "on"
+# Brief RS1, the one key added since FFP: `rs`, quest id -> { skill line, rank }, the upstream's
+# requiredSkill (its inherited corrections and its Forever fixes), { 0, 0 } where it took the pair away.
+# The owner, 2026-11-09, on his item 593: "yes" to the two required skill fields (this one and
+# EraSources.lua's `rs`), approving the extra key on this list. Numbers alone.
+REQUIRED_SKILLS_FIELD = "rs"
 TOP_FIELDS = frozenset(
-    {"v", PIN_FIELD, LAYERS_FIELD, "legend", "signed", "i", "q", "n", "o", OBJECT_NAMES_FIELD}
+    {
+        *("v", PIN_FIELD, LAYERS_FIELD, "legend", "signed", "i", "q", "n", "o"),
+        *(OBJECT_NAMES_FIELD, REQUIRED_SKILLS_FIELD),
+    }
 )
 # A commit id as the pin states one (Pin's own check): 40 lower case letters and digits.
 _COMMIT = re.compile(r"^[0-9a-z]{40}$")
@@ -1801,8 +1843,9 @@ def unpack_record(letter: str, text: str, legend: Mapping, signed: Mapping) -> d
 def pack_selection(
     selection: Selection, *, commit: str | None = None, layer_set: str | None = None
 ) -> dict[str, object]:
-    """The module's value: { v, u, L, legend, signed, i, q, n, o, on }; u (the upstream commit) and L (the
-    layer set) where given, which `build` always gives (brief QZ6); on the object names (brief FFP)."""
+    """The module's value: { v, u, L, legend, signed, i, q, n, o, on, rs }; u (the upstream commit) and L
+    (the layer set) where given, which `build` always gives (brief QZ6); on the object names (brief FFP);
+    rs the quests' required skills (brief RS1), each { skill line, rank }."""
     legend, signed = legend_of(selection)
     value: dict[str, object] = {"v": FORMAT_VERSION, "legend": legend, "signed": signed}
     if commit is not None:
@@ -1815,6 +1858,9 @@ def pack_selection(
             for ident, record in sorted(selection.records[letter].items())
         }
     value[OBJECT_NAMES_FIELD] = dict(sorted(selection.object_names.items()))
+    value[REQUIRED_SKILLS_FIELD] = {
+        quest: [skill, rank] for quest, (skill, rank) in sorted(selection.required_skills.items())
+    }
     return value
 
 
@@ -1854,6 +1900,23 @@ def check_value(value: Mapping) -> None:
             raise GuardError(f"{OBJECT_NAMES_FIELD} holds a row that is not object id to name")
         if object_name_fault(name) is not None:
             raise GuardError(f"{OBJECT_NAMES_FIELD}[{ident}] holds something other than a plain name")
+    # Brief RS1: quest id -> { skill line, rank }, two whole numbers neither below 0, and a removal is
+    # { 0, 0 }: nothing else.
+    skills = value.get(REQUIRED_SKILLS_FIELD) or {}
+    if not isinstance(skills, Mapping):
+        raise GuardError(f"{REQUIRED_SKILLS_FIELD} is not quest id to a pair")
+    for ident, pair in skills.items():
+        if not isinstance(ident, int) or isinstance(ident, bool) or ident < 1:
+            raise GuardError(f"{REQUIRED_SKILLS_FIELD} holds a row that is not quest id to a pair")
+        if (
+            not isinstance(pair, list | tuple)
+            or len(pair) != 2
+            or not all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in pair)
+            or (pair[0] == 0 and pair[1] != 0)
+        ):
+            raise GuardError(
+                f"{REQUIRED_SKILLS_FIELD}[{ident}] holds something other than a skill line and rank"
+            )
 
 
 # ----- the build --------------------------------------------------------------------------------
@@ -1935,6 +1998,8 @@ def build(tree: UpstreamTree, *, layer_set: str, lua: str) -> OpenSources:
         "plainBytes": len(plain.encode("utf-8")),
         "objectNames": len(selection.object_names),
         "objectNamesLeftOut": sum(selection.names_left_out.values()),
+        "requiredSkills": len(selection.required_skills),
+        "requiredSkillsRemoved": sum(1 for skill, _rank in selection.required_skills.values() if skill == 0),
     }
     return OpenSources(
         _BUILT,
@@ -1959,7 +2024,8 @@ CREDIT = (
     f"({UPSTREAM_REPOSITORY}), the Questie project's database, at commit {QUESTIEDB_COMMIT} "
     f"({QUESTIEDB_VERSION}). Ids and numbers, and the names of the objects they name: which creature, "
     "object or item starts, ends or "
-    "asks for a quest, a quest's levels, sides, classes and chain, which creature or object drops "
+    "asks for a quest, a quest's levels, sides, classes, chain and required profession, which creature "
+    "or object drops "
     "an item, which creature sells it, which quest rewards it, and where creatures and objects "
     "stand (the upstream's own zone ids and map percentages). WoW Forever may differ; the addon "
     "shows these as predicted."
@@ -2044,7 +2110,8 @@ def header_lines(table: OpenSources, *, generated: str, version: str) -> list[st
         "the names of the objects they name. docs/open-sources.md in the pipeline is the contract.",
         f"{{ v = {FORMAT_VERSION}, {PIN_FIELD}, {LAYERS_FIELD}, legend, signed, i = {{ [itemId] = record }}, "
         "q = { [questId] = record }, n = { [creatureId] = record }, o = { [objectId] = record }, "
-        f"{OBJECT_NAMES_FIELD} = {{ [objectId] = name }} }}. v is "
+        f"{OBJECT_NAMES_FIELD} = {{ [objectId] = name }}, "
+        f"{REQUIRED_SKILLS_FIELD} = {{ [questId] = {{ skill line, rank }} }} }}. v is "
         f"the format version; refuse any other. {PIN_FIELD} is the upstream commit and {LAYERS_FIELD} the "
         "layer set this file was built from, the stamp line's own.",
         f"record: segments joined by {SEPARATOR!r}; a segment is its key letter then fixed width numbers "
@@ -2060,14 +2127,19 @@ def header_lines(table: OpenSources, *, generated: str, version: str) -> list[st
         "trainer 16), l L levels, z zone id, a side (1 Alliance, 2 Horde, 3 both). o: s spawns, z "
         "zone id. Zone ids are the upstream's own area ids and points its own map percentages. "
         f"{OBJECT_NAMES_FIELD}: the upstream's English name of each object this file names (a row of o, "
-        "an item's o, a quest's G and E); a missing name or a placeholder has no row here.",
+        "an item's o, a quest's G and E); a missing name or a placeholder has no row here. "
+        f"{REQUIRED_SKILLS_FIELD}: the skill a quest asks the player to have, {{ skill line, rank }} (the "
+        "SkillLine id: 164 Blacksmithing, 171 Alchemy, 202 Engineering, ...), for the quests whose "
+        "requiredSkill was first stated by a layer of this set; { 0, 0 } where a layer of this set took "
+        "the pair away: the quest asks for no skill.",
         f"Layers: {table.layer_set}, {LAYER_WORDS[table.layer_set]}. A creature drop list longer than "
         f"{MASS_DROPPERS} is a world drop and is left out whole.",
         CREDIT,
         *licence_lines(),
         f"{counts['items']} items, {counts['quests']} quests, {counts['npcs']} creatures, "
         f"{counts['objects']} objects; {counts['facts']} facts; {counts['objectNames']} object names, "
-        f"{counts['objectNamesLeftOut']} objects with none.",
+        f"{counts['objectNamesLeftOut']} objects with none; {counts['requiredSkills']} required skills "
+        f"({counts['requiredSkillsRemoved']} taken away).",
     ]
 
 
@@ -2117,6 +2189,8 @@ def summary_lines(table: OpenSources, text: str) -> list[str]:
         f"{table.counts['npcs']:,} creatures, {table.counts['objects']:,} objects",
         f"  bytes: {raw:,} packed (the file), {table.counts['plainBytes']:,} as plain decimal records",
         f"  object names: {table.counts['objectNames']:,}; none for {nameless}",
+        f"  required skills: {table.counts['requiredSkills']:,} ({table.counts['requiredSkillsRemoved']:,} "
+        "taken away)",
         f"  kept values by first origin: {origin}",
         f"  left out: {left}",
     ]

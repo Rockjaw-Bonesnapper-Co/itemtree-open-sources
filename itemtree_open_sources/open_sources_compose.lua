@@ -39,6 +39,11 @@ Protocol (open_sources.compose writes stdin and reads stdout):
                                                             byte of it can end or split a line
             L <entity> <id> <field> <value> <mask>          one element of a list field, in order
             G <entity> <id> <field> <group> <value> <mask>  one element of a grouped field
+            R <entity> <id> <field> <first> <second> <mask> a pair field (brief RS1: a quest's
+                                                            requiredSkill, its skill line and
+                                                            rank); "0 0" where a layer cleared
+                                                            the pair while it stood, the mask
+                                                            then the bits of the clearing layers
             P <entity> <id> <zone> <x> <y> <mask>           one spawn point
             # <layer> <file> <rows> <created> <steps>       what each provider did
           then "END <lines>". A mask is the bits of every layer that stated the value while it
@@ -280,6 +285,7 @@ local SCHEMA = {
     requiredRaces = false,
     requiredClasses = false,
     nextQuestInChain = false,
+    requiredSkill = "pair",
   },
   Npc = {
     spawns = "spawnlist",
@@ -318,6 +324,18 @@ for _, entity in ipairs(ENTITIES) do
       (want == false and got == nil) or got == want,
       entity .. " schema reshaped " .. name .. ": a shape this composer does not know"
     )
+  end
+end
+
+-- Brief RS1: the pair fields the file keeps that a layer may clear (an empty table) while they stand.
+-- Each such clear is remembered with the clearing layer's bit (CLEARED[entity][id][field]), so the
+-- file can say the upstream took the pair away; a later layer that states the pair again forgets it.
+local CLEARABLE = { Quest = { "requiredSkill" } }
+local CLEAR_FIELDS, CLEARED = {}, {}
+for _, entity in ipairs(ENTITIES) do
+  CLEAR_FIELDS[entity], CLEARED[entity] = {}, {}
+  for _, name in ipairs(CLEARABLE[entity] or {}) do
+    CLEAR_FIELDS[entity][META[entity].keys[name]] = true
   end
 end
 
@@ -654,11 +672,21 @@ local function merge(entity, layer, corrections, options, label)
             if options.noOverwrites and row[key] ~= nil then -- luacheck: ignore 542
               -- left as it is
             elseif isempty(value) then
+              -- Brief RS1: a kept pair field cleared while it stood (or cleared again) is remembered.
+              local held = CLEARED[entity][id]
+              if CLEAR_FIELDS[entity][key] and (row[key] ~= nil or (held and held[key])) then
+                held = held or {}
+                CLEARED[entity][id] = held
+                held[key] = (held[key] or 0) | bit
+              end
               row[key], ORG[entity][id][key] = nil, nil
             else
               local old = row[key]
               row[key] = value
               origin_replace(entity, id, key, old, value, bit)
+              if CLEARED[entity][id] then
+                CLEARED[entity][id][key] = nil
+              end
             end
           end
         end
@@ -762,12 +790,14 @@ end
 -------------------------------------------------------------------------------- out: numbers and an object's name
 -- The fields OpenSources.lua is made from, by the upstream meta names. Nothing else leaves. Only an
 -- object's name is text (brief FFP, item 466), and it leaves as hexadecimal; open_sources.py decides
--- whether the file keeps it.
+-- whether the file keeps it. A pair (brief RS1) leaves as its two numbers, exactly two.
 local PROJECT = {
   Quest = {
     scalar = { "sourceItemId", "questLevel", "requiredLevel", "requiredRaces", "requiredClasses", "nextQuestInChain" },
     list = { "preQuestSingle", "preQuestGroup" },
     grouped = { startedBy = { 1, 2, 3 }, finishedBy = { 1, 2 }, objectives = { 3 } },
+    -- Brief RS1: the skill line and rank a quest asks for.
+    pair = { "requiredSkill" },
   },
   Npc = { scalar = { "npcFlags", "minLevel", "maxLevel", "zoneID" }, side = "friendlyToFaction", spawns = "spawns" },
   Item = { scalar = { "startQuest" }, list = { "npcDrops", "objectDrops", "itemDrops", "vendors", "questRewards" } },
@@ -859,6 +889,23 @@ for _, entity in ipairs(ENTITIES) do
             end
           end
         end
+      end
+    end
+    for _, name in ipairs(project.pair or {}) do
+      local field = index[name]
+      local value = field and row[field]
+      local cleared = CLEARED[entity][id] and CLEARED[entity][id][field]
+      if value ~= nil then
+        if type(value) ~= "table" or #value ~= 2 then
+          error("not a pair where one belongs: " .. where .. " " .. name, 0)
+        end
+        local mask = origins[field] and origins[field].m or 0
+        out[#out + 1] = tconcat({
+          "R", entity, sformat("%d", id), name, number(value[1], where .. " " .. name),
+          number(value[2], where .. " " .. name), sformat("%d", mask),
+        }, "\t")
+      elseif cleared then
+        out[#out + 1] = tconcat({ "R", entity, sformat("%d", id), name, "0", "0", sformat("%d", cleared) }, "\t")
       end
     end
     if project.text then

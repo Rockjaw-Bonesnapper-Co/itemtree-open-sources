@@ -114,6 +114,15 @@ chooses a `qs` row (BuildFacts.profession_spells still chooses `tr` alone). Only
 no scaffolding, as `qp`'s rule is; a `qs` quest nothing else titles gets its title in `qt` the way a
 `qp` one does.
 
+Since 2026-11-09 (brief RS1, on the owner's "yes" of 2026-11-09 to the two required skill fields, his
+item 593) two more `quest_template` columns are read, `RequiredSkill` and `RequiredSkillValue`: the
+skill line a quest asks the player to have and the rank it asks, two numbers and nothing else read. They
+ship as `rs`, keyed by quest id, each value `{ skill line, rank }`: Supplying the Front (1578) asks for
+Blacksmithing (164) at 30. Every titled quest that is no scaffolding and states a skill line above 0
+ships, its rank as the dump states it (0 among them: Liquid Stone, 715, states Alchemy and no rank), so
+nothing of the caller's chooses an `rs` row. No title is added to `qt` for it: the addon reads `rs` by a
+quest id it already holds.
+
 Since 2026-10-22 (brief EO1, on the owner's ruling "3A" of 2026-10-22) the world OBJECTS that start
 and end quests are read the same way: `gameobject_questrelation` (which object starts a quest) and
 `gameobject_involvedrelation` (which ends one), two id columns each and nothing else, so a wanted
@@ -1216,6 +1225,10 @@ class EraInput:
     # RewSpellCast, questId -> (the spell its reward shows, the spell it casts when rewarded), for every
     # entry stating either above 0. Spell ids only. Read for `qs` (quest_taught_spells).
     quest_spells: dict[int, tuple[int, int]] = field(default_factory=dict)
+    # Brief RS1 (the owner's "yes" of 2026-11-09, item 593): quest_template's RequiredSkill and
+    # RequiredSkillValue, questId -> (the skill line it asks for, the rank it asks; below 0 read as 0),
+    # for every entry whose RequiredSkill is above 0. Two numbers only. Shipped as `rs`.
+    quest_skills: dict[int, tuple[int, int]] = field(default_factory=dict)
     # Brief NX2 (the owner's word of 2026-10-23): quest_template's RequiredCondition, questId -> the
     # `conditions` row it names, and its BreadcrumbForQuestId, questId -> the quest the breadcrumb leads
     # to, each for every entry with one above 0; and the `conditions` rows themselves, condition_entry ->
@@ -1308,6 +1321,7 @@ CMANGOS_FIELDS = frozenset(
         "quest_links",
         "quest_sources",
         "quest_spells",
+        "quest_skills",
         "quest_conditions",
         "quest_breadcrumbs",
         "conditions",
@@ -1484,6 +1498,10 @@ class EraSources:
     # spell its reward casts, quest_taught_spells) -> the quests that teach it, packed by pack_quests.
     # Shipped as `qs`.
     quest_taught: dict[int, str] = field(default_factory=dict)
+    # Brief RS1 (the owner's "yes" of 2026-11-09, item 593): questId -> (the skill line it asks for, the
+    # rank it asks), quest_template's RequiredSkill and RequiredSkillValue (quest_required_skills).
+    # Shipped as `rs`, each value { skill line, rank }.
+    required_skills: dict[int, tuple[int, int]] = field(default_factory=dict)
     counts: dict[str, int] = field(default_factory=dict)
     dropped: dict[str, int] = field(default_factory=dict)
     # Brief EK1, for the caller that places the names (never shipped): which names the table opens
@@ -1562,10 +1580,17 @@ class EraSources:
         # Brief NR17: the quests that teach each spell, absent where none ships.
         if self.quest_taught:
             value["qs"] = dict(self.quest_taught)
+        # Brief RS1: the skill line and rank each quest asks for, absent where none ships.
+        if self.required_skills:
+            value["rs"] = self.required_skills_value()
         if generated:
             value["g"] = generated
         check_gpl_value(value, self.blank)
         return value
+
+    def required_skills_value(self) -> dict[int, list[int]]:
+        """Brief RS1: `rs` as it ships, { [questId] = { skill line, rank } }."""
+        return {quest: [skill, rank] for quest, (skill, rank) in self.required_skills.items()}
 
 
 # Brief GA1: the keys EraSources.lua (GPL-3.0) may hold, and nothing else. Each is read out of the
@@ -1583,10 +1608,12 @@ class EraSources:
 # SrcItemCount), on the owner's ruling "2A" of 2026-10-22 (the Classic Era provided items).
 # Brief NR17 adds `qs`, the spells a quest teaches (quest_template.RewSpell and RewSpellCast, through
 # spell_template's learn effect), on the owner's ruling of 2026-11-06 ("Add it gpl field").
+# Brief RS1 adds `rs`, the skill line and rank a quest asks for (quest_template.RequiredSkill and
+# RequiredSkillValue), on the owner's "yes" of 2026-11-09 to the two required skill fields (item 593).
 GPL_FIELDS = frozenset(
     {
         *("s", "r", "qt", "ck", "cd", "ci", "oi", "qg", "og", "st", "tr", "tv", "tc", "qr"),
-        *("qc", "qe", "ql", "qa", "qw", "qo", "qp", "qs", "x", "xl", "g"),
+        *("qc", "qe", "ql", "qa", "qw", "qo", "qp", "qs", "rs", "x", "xl", "g"),
     }
 )
 # The keys a packed module adds beside them (pack_module).
@@ -2212,6 +2239,11 @@ def _absorb(
             spells = (max(0, _int(col("RewSpell"))), max(0, _int(col("RewSpellCast"))))
             if any(spells):
                 era.quest_spells[qid] = spells
+            # Brief RS1, the owner's "yes" of 2026-11-09: the skill line the quest asks for and the
+            # rank, two numbers.
+            skill = _int(col("RequiredSkill"))
+            if skill > 0:
+                era.quest_skills[qid] = (skill, max(0, _int(col("RequiredSkillValue"))))
             # Brief NX2, the owner's word of 2026-10-23: the condition row the quest asks to hold before
             # it can be taken, and the quest a breadcrumb leads to, ids only.
             condition = _int(col("RequiredCondition"))
@@ -3666,6 +3698,33 @@ def quest_taught_spells(
     return out
 
 
+def quest_required_skills(
+    era_input: CmangosFacts,
+    counts: dict[str, int],
+    dropped: dict[str, int],
+) -> dict[int, tuple[int, int]]:
+    """questId -> (the skill line it asks for, the rank it asks), ascending (brief RS1, the owner's "yes"
+    of 2026-11-09, item 593), out of quest_template's RequiredSkill and RequiredSkillValue alone.
+
+    Every quest stating a skill line ships, its rank as the dump states it (0 among them): nothing of a
+    client build chooses a row. Only a quest `quest_template` titles, never one whose title is
+    scaffolding (as `qp`'s rule); the rest are counted in `dropped`. Two numbers per quest. Pure."""
+    out: dict[int, tuple[int, int]] = {}
+    for quest_id, (skill, rank) in sorted(era_input.quest_skills.items()):
+        title = era_input.quest_names.get(quest_id, "")
+        if not title:
+            dropped["questSkillUntitled"] += 1
+            continue
+        if is_scaffolding(title):
+            dropped["questSkillScaffolding"] += 1
+            continue
+        out[quest_id] = (skill, rank)
+    counts["questRequiredSkills"] = len(out)
+    counts["questRequiredSkillLines"] = len({skill for skill, _rank in out.values()})
+    counts["questRequiredSkillNoRank"] = sum(1 for _skill, rank in out.values() if rank <= 0)
+    return out
+
+
 def _vendor_creatures(era_input: CmangosFacts) -> set[int]:
     """Every creature id that sells anything, by `npc_vendor` or by a vendor template."""
     found = {offer.vendor for offer in era_input.vendor_offers}
@@ -4080,6 +4139,8 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         "questSpellTeachesNothing": 0,
         "questSpellUntitled": 0,
         "questSpellScaffolding": 0,
+        "questSkillUntitled": 0,
+        "questSkillScaffolding": 0,
     }
     counts: dict[str, int] = {
         "multiQuest": 0,
@@ -4246,6 +4307,9 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
     # Brief NR17 (the owner's ruling of 2026-11-06): the spells each kept quest teaches, the dump's
     # rule alone. Titled with qp's quests below.
     taught = quest_taught_spells(era_input, counts, dropped)
+    # Brief RS1 (the owner's "yes" of 2026-11-09): the skill line and rank each quest asks for, the
+    # dump's rule alone. No title is added for it.
+    required_skills = quest_required_skills(era_input, counts, dropped)
     # Brief T1, the owner's ruling of 2026-09-27: the title under the name, for the vendors and
     # the quest givers and enders the table names, and no other creature (the caller's side for
     # the same names, EraPlaces.lua's `cf`, is read by the same speaking_creatures rule). Since then
@@ -4502,6 +4566,7 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         quest_next={quest: pack_quests(quests) for quest, quests in later.items()},
         quest_provided={quest: pack_requires([pair]) for quest, pair in sorted(provided.items())},
         quest_taught={spell: pack_quests(quests) for spell, quests in taught.items()},
+        required_skills=required_skills,
         list_index={
             item: dict(sorted(by_kind_rows.items())) for item, by_kind_rows in sorted(list_index.items())
         },
@@ -4901,6 +4966,7 @@ def header_lines(table: EraSources) -> list[str]:
         + ("qo = { [questId] = the quests that come after it, packed }, " if table.quest_next else "")
         + ("qp = { [questId] = the item it hands over when taken, packed }, " if table.quest_provided else "")
         + ("qs = { [spellId] = the quests that teach it, packed }, " if table.quest_taught else "")
+        + ("rs = { [questId] = { skill line, rank } }, " if table.required_skills else "")
         + "legend = { {field, type}, ... }, packed = 1, g = the Generated stamp above }",
         "r[itemId] is a LIST of rows, in the order to draw them: category ascending, best "
         "chance first inside a category, the summary row last. Never sort it. A herb or a vein "
@@ -5137,6 +5203,20 @@ def header_lines(table: EraSources) -> list[str]:
                 f"{counts.get('questTaughtTitlesByString', 0)} by string).",
             ]
             if table.quest_taught
+            else []
+        ),
+        *(
+            [
+                "rs: the skill a quest asks the player to have, keyed by quest id: { skill line, rank }, "
+                "quest_template.RequiredSkill (the SkillLine id: 164 Blacksmithing, 171 Alchemy, 202 "
+                "Engineering, ...) and RequiredSkillValue as the dump states them; a rank of 0 states the "
+                "skill line and no rank. Every titled quest stating a skill line; one stating none has no "
+                "entry. "
+                f"{counts.get('questRequiredSkills', 0)} quests over "
+                f"{counts.get('questRequiredSkillLines', 0)} skill lines "
+                f"({counts.get('questRequiredSkillNoRank', 0)} with no rank).",
+            ]
+            if table.required_skills
             else []
         ),
         "x, xl: the rest of the list a summary row stands for, so it can be opened and "
