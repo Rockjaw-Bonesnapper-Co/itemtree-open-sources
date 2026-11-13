@@ -23,11 +23,14 @@ the Questie name and logo, which are the Questie project's.
 
 > Open source quest and world data for WoW Forever, derived from QuestieDB
 > (github.com/Questie/QuestieDB), the Questie project's database, at commit
-> 4d31c10394b11bd133069ecf1662062cdf4d8691 (v1.0.12). Ids and numbers, and the names of the objects
-> they name: which creature, object or item starts, ends or asks for a quest, a quest's levels, sides,
-> classes, chain and required profession, which creature or object drops an item, which creature sells
-> it, which quest rewards it, and where creatures and objects stand (the upstream's own zone ids and
-> map percentages). WoW Forever may differ; the addon shows these as predicted.
+> e19dfdf8528334ea63da0ecc4e291c134c0fc266 (v1.0.14). Ids and numbers, the names of the objects they
+> name and of the creatures quest objectives name: which creature, object or item starts, ends or asks
+> for a quest, a quest's levels, sides,
+> classes, chain, required profession and whether it repeats, which creature or object drops an item,
+> which creature sells
+> it, which quest rewards it, which creature, object or area a quest's objectives name, and where
+> creatures and objects stand (the upstream's own zone ids and map percentages). WoW Forever may differ;
+> the addon shows these as predicted.
 
 ## The upstream's licence, as it stands
 
@@ -68,9 +71,9 @@ One commit of QuestieDB, fixed by the constants at the top of `open_sources.py` 
 | what | value |
 | --- | --- |
 | repository | QuestieDB (GPL-3.0, with the caveats above) |
-| commit | `4d31c10394b11bd133069ecf1662062cdf4d8691` (v1.0.12) |
-| tarball | `https://github.com/Questie/QuestieDB/archive/4d31c10394b11bd133069ecf1662062cdf4d8691.tar.gz` |
-| content hash | `93d6ee23f0ee126d9f037fc70c02e77611a5e5f83072a911892a046a20351091` |
+| commit | `e19dfdf8528334ea63da0ecc4e291c134c0fc266` (v1.0.14) |
+| tarball | `https://github.com/Questie/QuestieDB/archive/e19dfdf8528334ea63da0ecc4e291c134c0fc266.tar.gz` |
+| content hash | `aa3e6af8802780b32ca8e8e2c2c761618ebe875fa148d1e5160c5c3335832a85` |
 | `LICENSE.md` | sha256 `d9937e385c401d234ef416b91f00290f8ea8e517f39ed4359aed99115770d8c9` |
 | `gpl-3.0.md` | sha256 `cc5470feed66192387f06ae93aed0bd4fefae5a5fd7c1e54a4acf4ea64f1028b` |
 
@@ -78,7 +81,9 @@ The files read are not a list kept here: `open_sources.derive_plan` reads them o
 load lists at the commit, as text (its `QuestieDB.toc`, its `src/config.lua` with the correction
 registry, and `src/corrections/manifest.lua`), and puts each file the Forever flavour loads in one
 known class (a layer by its folder and name, an enum, meta or base file, or a known file that is
-never composed); anything else stops the build. The content hash is the sha256 of one line per file
+never composed); anything else stops the build. QuestieDB's Forever support tables (zone maps, drop
+rates, quest experience and faction templates) are among the files never composed, each named one by
+one: nothing in `OpenSources.lua` comes from them. The content hash is the sha256 of one line per file
 read (the three load lists and the files they name), sorted by path, each
 `<path> <sha256 of its bytes>` and a newline. A tarball's own bytes are not pinned (a host may pack
 the same commit differently); its files are. The compiler builds those exact bytes or nothing.

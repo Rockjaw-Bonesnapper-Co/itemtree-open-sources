@@ -36,7 +36,7 @@ How the file is made:
    and nothing of the upstream text is ever run outside the sandbox.
 3. The selection. `select_facts` keeps the facts whose first origin is in the layer set (LAYER_SETS;
    the shipped one is SHIPPED_LAYER_SET) under the minimal key set (ids and numbers only, KEYS):
-   items d o c v r s, quests g G I e E n p l m x k N P, creatures s f l L z a, objects s z. A
+   items d o c v r s, quests g G I e E n p l m x k N P f, creatures s f l L z a, objects s z. A
    creature drop list longer than MASS_DROPPERS is a world drop and is left out whole. Brief FFP (the
    owner's item 466): beside the facts, `object_names` keeps the upstream's English name of every
    object the kept facts name, whichever layer stated it, a label and no fact; a missing name or a
@@ -44,12 +44,19 @@ How the file is made:
    RS1 (the owner's "yes" of 2026-11-09, item 593): beside the records, `required_skills` keeps the
    skill line and rank a quest asks for (the upstream's requiredSkill) whose first origin is in the
    layer set, and (0, 0) where a layer in it cleared the pair while it stood: the upstream took it
-   away.
+   away. Brief Q41 (the owner's go of 2026-11-10, Lost in Battle 4921): beside them,
+   `objective_targets` keeps what each quest's objectives name (a creature, an object, the area its
+   triggerEnd completes in) and where each named creature and object stands, from every layer, the
+   base among them, since no Classic Era file names an objective's target. Brief ST1 (the owner's
+   self test of 2026-11-12: the Forever Runecloth donations' "Additional Runecloth" repeats 99195 and
+   99200 counted as one time quests): a quest's `f`, the repeatable bit of the upstream's
+   specialFlags (QUEST_FLAGS_KEPT), by first origin like every other fact.
 4. The file. `pack_selection` packs each record into one string (the packed format below) and `module_text`
    writes OpenSources.lua: the header through the one GPL helper (era_sources.gpl_licence_lines),
    the value checked against the key allow list, and no address but the Corresponding Source. The
    value carries its own pin (brief QZ6): `u` the upstream commit and `L` the layer set; the
-   object names (brief FFP): `on`; and the quests' required skills (brief RS1): `rs`.
+   object names (brief FFP): `on`; the quests' required skills (brief RS1): `rs`; and the objective
+   targets (brief Q41): `ot`, with its own legend and guard (check_targets).
 
 The upstream's zone ids (its own area ids) and its map coordinates (percent of its zone's map, one
 decimal) ship as they are: mapping them onto a game client's maps needs that client's tables, so it
@@ -65,7 +72,7 @@ import shutil
 import subprocess
 import tarfile
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -103,8 +110,8 @@ UPSTREAM_REPOSITORY = "github.com/Questie/QuestieDB"
 # The pin. `itemtree-data open-sources update` rewrites these two lines, PIN.content_sha256 and
 # PIN.notices in place on a re-pin (docs/open-sources.md, "Re-pinning"): keep each on its own line
 # in this shape.
-QUESTIEDB_COMMIT = "4d31c10394b11bd133069ecf1662062cdf4d8691"
-QUESTIEDB_VERSION = "v1.0.12"
+QUESTIEDB_COMMIT = "e19dfdf8528334ea63da0ecc4e291c134c0fc266"
+QUESTIEDB_VERSION = "v1.0.14"
 
 # The files the composer reads are not a list of ours: they are derived from the upstream's own load
 # lists at the pinned commit (its TOC, its configuration's correction registry and its correction
@@ -138,7 +145,7 @@ PIN = Pin(
     commit=QUESTIEDB_COMMIT,
     version=QUESTIEDB_VERSION,
     archive_url=archive_url_for(QUESTIEDB_COMMIT),
-    content_sha256="93d6ee23f0ee126d9f037fc70c02e77611a5e5f83072a911892a046a20351091",
+    content_sha256="aa3e6af8802780b32ca8e8e2c2c761618ebe875fa148d1e5160c5c3335832a85",
     notices=(
         ("LICENSE.md", "d9937e385c401d234ef416b91f00290f8ea8e517f39ed4359aed99115770d8c9"),
         ("gpl-3.0.md", "cc5470feed66192387f06ae93aed0bd4fefae5a5fd7c1e54a4acf4ea64f1028b"),
@@ -435,19 +442,33 @@ NOT_COMPOSED: tuple[tuple[re.Pattern[str], str], ...] = tuple(
         (r"^src/read/[A-Za-z_]+\.lua$", "the runtime's data loaders"),
         (r"^data/_end\.lua$", "loader teardown"),
         (r"^src/support/[A-Za-z_]+\.lua$", "the runtime's support loader and helpers"),
+        # The Forever support block (src/support/data.lua: whole tables the upstream's consumer reads,
+        # never applied to its entities), each file read and classified by brief OS14 (the owner's
+        # "1B add new" of 2026-11-11; docs/open-sources.md, "The support files"). None states a
+        # fact of the shipped layer set under a key the allow list holds.
         (
             r"^support/Forever/Zones/(dungeons|subZoneToParentZone|instanceIdToAreaId|areaIdToUiMapId"
             r"|uiMapIdToAreaId)\.lua$",
-            "zone maps (never a fact this file keeps)",
+            "zone maps: area, sub zone, instance and map ids and dungeon entrances (mapping areas onto "
+            "a client's maps is the addon's or a file of ours, never this file's)",
         ),
         (
             r"^support/Forever/DropTables/(itemDropCorrections|classicItemDrops)\.lua$",
-            "drop rates (never a fact this file keeps)",
+            "drop rates, the Classic seed (no rate leaves the composer, and the seed is below the post "
+            "era layers)",
         ),
-        (r"^support/Forever/QuestXP/xpDB-classic\.lua$", "quest experience (never a fact this file keeps)"),
+        (
+            r"^support/Forever/QuestXP/xpDB-classic\.lua$",
+            "quest experience, the Classic seed (below the post era layers)",
+        ),
+        (
+            r"^support/Forever/QuestXP/xpDB-traces\.lua$",
+            "quest experience from the player trace extract (the upstream never applies its level to "
+            "an entity; the experience is a key the allow list does not hold)",
+        ),
         (
             r"^support/Forever/FactionTemplates/factionTemplateClassic\.lua$",
-            "faction templates (never a fact this file keeps)",
+            "faction templates, the client's own (a creature's side is its friendlyToFaction)",
         ),
         (
             r"^src/corrections/(registry|compat|register|manifest|_begin|_end)\.lua$",
@@ -1122,16 +1143,26 @@ PROJECTED: dict[str, dict[str, frozenset[str]]] = {
                 "requiredRaces",
                 "requiredClasses",
                 "nextQuestInChain",
+                # Brief ST1: the special flags, of which the file keeps the repeatable bit.
+                "specialFlags",
             }
         ),
         "L": frozenset({"preQuestSingle", "preQuestGroup"}),
         "G": frozenset({"startedBy", "finishedBy", "objectives"}),
         # Brief RS1: a pair, the skill line and rank a quest asks for.
         "R": frozenset({"requiredSkill"}),
+        # Brief Q41: the kill credit objectives, a quest's killCreditObjectiveFirst mark and its
+        # triggerEnd area's points (as P lines).
+        "K": frozenset({"objectives"}),
+        "F": frozenset({"killCreditObjectiveFirst"}),
+        "P": frozenset(),
     },
     "Npc": {
         "S": frozenset({"npcFlags", "minLevel", "maxLevel", "zoneID", "friendlyToFaction"}),
         "P": frozenset(),
+        # Brief Q41 (the owner's "Take" of 2026-11-10): a creature's name, kept only where an objective
+        # names the creature (creature_names).
+        "T": frozenset({"name"}),
     },
     "Item": {
         "S": frozenset({"startQuest"}),
@@ -1188,6 +1219,11 @@ class Row:
     texts: dict[str, str] = field(default_factory=dict)
     # Brief RS1: a pair field as (first, second, mask); (0, 0, mask) where a layer cleared it.
     pairs: dict[str, tuple[int, int, int]] = field(default_factory=dict)
+    # Brief Q41: a quest's kill credit objectives in order, each (root creature or 0, (creatures that
+    # give the credit, ...), mask), and the upstream's marks on it (killCreditObjectiveFirst). A
+    # quest's `points` are its triggerEnd area's.
+    credits: list[tuple[int, tuple[int, ...], int]] = field(default_factory=list)
+    flags: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -1253,12 +1289,13 @@ def parse_composed(text: bytes, paths: Iterable[str] | None = None) -> Composed:
                 raise OpenSourcesError(f"the composer wrote a bad count ({number})")
             stats.append(LayerStat(parts[1], parts[2], *counts))
             continue
-        widths = {"S": 6, "L": 6, "G": 7, "P": 7, "T": 6, "R": 7}
+        widths = {"S": 6, "L": 6, "G": 7, "P": 7, "T": 6, "R": 7, "K": 7, "F": 4}
         if kind not in widths or len(parts) != widths[kind] or parts[1] not in ENTITIES:
             raise OpenSourcesError(f"the composer wrote a line this reader does not know ({number})")
         entity = parts[1]
         ident = _number(parts[2], number)
-        mask = _number(parts[-1], number)
+        # Brief Q41: an F line carries no mask (a mark, never a fact of its own).
+        mask = 0 if kind == "F" else _number(parts[-1], number)
         if not isinstance(ident, int) or not isinstance(mask, int) or mask < 0:
             raise OpenSourcesError(f"the composer wrote a bad id or mask ({number})")
         allowed = PROJECTED[entity]
@@ -1267,7 +1304,26 @@ def parse_composed(text: bytes, paths: Iterable[str] | None = None) -> Composed:
         if kind == "P" and "P" not in allowed:
             raise OpenSourcesError(f"the composer wrote spawns for {entity} ({number})")
         row = rows[entity].setdefault(ident, Row())
-        if kind == "T":
+        if kind == "F":
+            row.flags.add(parts[3])
+        elif kind == "K":
+            # Brief Q41: the root (0 for none) and one or more creature ids, whole numbers above 0.
+            root = _number(parts[4], number)
+            credited = parts[5].split(",")
+            ids = (
+                [_number(token, number) for token in credited] if all(_INT.match(t) for t in credited) else []
+            )
+            if (
+                not isinstance(root, int)
+                or root < 0
+                or not ids
+                or not all(isinstance(value, int) and value > 0 for value in ids)
+            ):
+                raise OpenSourcesError(
+                    f"the composer wrote a kill credit this reader does not take ({number})"
+                )
+            row.credits.append((root, tuple(int(value) for value in ids), mask))
+        elif kind == "T":
             if not _HEX.match(parts[4]) or parts[3] in row.texts:
                 raise OpenSourcesError(f"the composer wrote a name this reader does not take ({number})")
             row.texts[parts[3]] = bytes.fromhex(parts[4]).decode("utf-8", "replace")
@@ -1400,10 +1456,16 @@ QUEST_SCALARS = (
 NPC_SCALARS = (("l", "minLevel"), ("L", "maxLevel"), ("z", "zoneID"), ("a", "friendlyToFaction"))
 # npcFlags as the file keeps them: vendor 4 and trainer 16 (the upstream's Forever flag values).
 NPC_FLAGS_KEPT = 4 | 16
+# Brief ST1: a quest's specialFlags as the file keeps them (`f`): the repeatable bit alone (the upstream's
+# specialFlags.REPEATABLE, 1). The owner's ruling of 2026-10-17 counts a repeatable quest but never lets it
+# keep an item, and nothing else tells the addon that a Forever quest repeats: Classic Era's repeatable
+# flag (CMaNGOS SpecialFlags) holds Classic quests alone. The owner, 2026-11-12: "1A", approving the key on
+# this allow list. Numbers alone.
+QUEST_FLAGS_KEPT = 1
 # The key set, in the order a record writes its keys (the allow list of each table).
 KEYS: dict[str, tuple[str, ...]] = {
     "i": ("d", "o", "c", "v", "r", "s"),
-    "q": ("g", "G", "I", "e", "E", "n", "p", "l", "m", "x", "k", "N", "P"),
+    "q": ("g", "G", "I", "e", "E", "n", "p", "l", "m", "x", "k", "N", "P", "f"),
     "n": ("s", "f", "l", "L", "z", "a"),
     "o": ("s", "z"),
 }
@@ -1428,7 +1490,8 @@ class Selection:
     above, and `names_left_out` why the others have none, by NAME_FAULTS. Brief RS1: `required_skills`,
     questId -> (skill line, rank) whose first origin is in the layer set, (0, 0) where the upstream
     cleared the pair; each is a fact ("q", quest, REQUIRED_SKILLS_FIELD, (skill line, rank)), so the
-    counts above and a re-pin's change report hold them."""
+    counts above and a re-pin's change report hold them. Brief Q41: `targets`, what each quest's
+    objectives name and where (objective_targets), a label beside the facts like `object_names`."""
 
     layer_set: str
     records: dict[str, dict[int, dict[str, object]]]
@@ -1439,6 +1502,12 @@ class Selection:
     object_names: dict[int, str] = field(default_factory=dict)
     names_left_out: dict[str, int] = field(default_factory=dict)
     required_skills: dict[int, tuple[int, int]] = field(default_factory=dict)
+    # Brief Q41: the objective targets (objective_targets), beside the facts and in none of their counts.
+    targets: Targets | None = None
+    # Brief Q41 (the owner's "Take" of 2026-11-10): the name of each creature an objective names
+    # (creature_names), a label like object_names, and why the others have none.
+    creature_names: dict[int, str] = field(default_factory=dict)
+    creature_names_left_out: dict[str, int] = field(default_factory=dict)
 
 
 def _tenths(value: int | float) -> int:
@@ -1466,13 +1535,16 @@ def object_name_fault(name: str) -> str | None:
 
 
 def object_names(
-    composed: Composed, records: Mapping[str, Mapping[int, Mapping[str, object]]]
+    composed: Composed,
+    records: Mapping[str, Mapping[int, Mapping[str, object]]],
+    targets: Iterable[int] = (),
 ) -> tuple[dict[int, str], dict[str, int]]:
     """Brief FFP (the owner's item 466, "A add in next release"): the upstream's name of each object the
     kept records name (a row of `o`, an item's `o`, a quest's `G` and `E`), whichever layer stated it,
     so a row the file gives reads as its container and not as a number; and how many have none, by why.
-    The file's own records choose: nothing of ours does."""
-    named: set[int] = set(records["o"])
+    Brief Q41: and of each object an objective names (`targets`, the objective targets' `o`), so its
+    row reads as the object. The file's own records choose: nothing of ours does."""
+    named: set[int] = set(records["o"]) | set(targets)
     for record in records["i"].values():
         named.update(record.get("o", ()))  # type: ignore[arg-type]
     for record in records["q"].values():
@@ -1486,6 +1558,275 @@ def object_names(
         fault = object_name_fault(text)
         if fault is None:
             names[obj] = text
+        else:
+            left[fault] += 1
+    return names, dict(left)
+
+
+# ----- the objective targets (brief Q41) ------------------------------------------------------------
+#
+# The owner, 2026-11-10, on Lost in Battle (4921), whose objective row read "0/1 Find Mankrik's Wife" with
+# no place: "One thing we dont have that I know is a common issue for players is the location of the wife
+# in this quest (questie has the location) I feel like we could add it too", his go to use the upstream's
+# objective targets. What each quest's objectives name, beside the facts: the creatures (objectives group
+# 1, and the one creature each kill credit objective, group 5, stands for), the objects (group 2) and the
+# area its triggerEnd completes in, and where each named creature and object stands. Unlike the facts,
+# from EVERY layer, the base among them: no Classic Era file names an objective's creature, object or
+# area (EraSources' qr names its items alone), so the post era rule would leave the Classic quests' own
+# targets out, 4921's Beaten Corpse (10668) the first of them. Numbers alone: no objective text, no icon.
+
+# The keys of the target tables: q (a quest) c creatures and o objects in the upstream's objective order,
+# a the triggerEnd area (a zone segment: the zone, then its points); n and o (a named creature or
+# object) s, one segment per zone it stands in, the zone with the most spawns first, each holding its
+# one point where the zone holds one spawn and no point where it holds more (the quest page pins a
+# place only where one spawn stands, brief TV4's rule for a Classic Era giver).
+TARGET_TABLES = ("q", "n", "o")
+TARGET_KEYS: dict[str, tuple[str, ...]] = {"q": ("c", "o", "a"), "n": ("s",), "o": ("s",)}
+TARGET_ZONE_KEYS: dict[str, frozenset[str]] = {
+    "q": frozenset({"a"}),
+    "n": frozenset({"s"}),
+    "o": frozenset({"s"}),
+}
+KILL_CREDIT_FIRST = "killCreditObjectiveFirst"
+
+
+@dataclass(frozen=True)
+class Targets:
+    """What `objective_targets` keeps: `quests` {quest: {"c": [creature ids], "o": [object ids], "a":
+    [(zone, ((x10, y10), ...)), ...]}}, each key left out where the quest's objectives name none of it;
+    `places` {"n": {creature: [(zone, point or ())]}, "o": {object: ...}}, every creature and object the
+    quests name that the upstream places, the point in tenths of a map percent; `left_out` what the rules
+    dropped, by why."""
+
+    quests: dict[int, dict[str, object]]
+    places: dict[str, dict[int, list[tuple[int, tuple[tuple[int, int], ...]]]]]
+    left_out: dict[str, int]
+
+
+def credit_target(root: int, credited: Sequence[int], placed: Callable[[int], bool]) -> int:
+    """The one creature a kill credit objective stands for: its root where the root gives the credit
+    itself or stands somewhere, else the first credited creature that stands somewhere, else the root,
+    else the first credited creature. `placed(creature)` says whether the upstream places it."""
+    if root > 0 and (root in credited or placed(root)):
+        return root
+    for creature in credited:
+        if placed(creature):
+            return creature
+    return root if root > 0 else credited[0]
+
+
+def _zone_places(
+    points: Iterable[tuple[int, int | float, int | float, int]],
+) -> list[tuple[int, tuple[tuple[int, int], ...]]]:
+    """A creature's or object's spawns as the target tables keep them: per zone, the most spawns first
+    (then the lower zone id), the one point where the zone holds one spawn, none where it holds more."""
+    by_zone: dict[int, list[tuple[int, int]]] = {}
+    for zone, x, y, mask in points:
+        if x >= 0 and y >= 0 and mask > 0:
+            by_zone.setdefault(int(zone), []).append((_tenths(x), _tenths(y)))
+    ordered = sorted(by_zone.items(), key=lambda item: (-len(item[1]), item[0]))
+    return [(zone, tuple(points) if len(points) == 1 else ()) for zone, points in ordered]
+
+
+def objective_targets(composed: Composed) -> Targets:
+    """Brief Q41: every quest's objective targets and their places, from every layer (a value counts once
+    some layer stated it while it stood: mask above 0). A pure function of the composed upstream."""
+    left: Counter[str] = Counter()
+    npcs, objects = composed.rows["Npc"], composed.rows["Object"]
+
+    def placed(creature: int) -> bool:
+        row = npcs.get(creature)
+        return row is not None and any(x >= 0 and mask > 0 for _zone, x, _y, mask in row.points)
+
+    quests: dict[int, dict[str, object]] = {}
+    for quest, row in sorted(composed.rows["Quest"].items()):
+        record: dict[str, object] = {}
+        creatures = [int(value) for value, mask in row.groups.get(("objectives", 1), []) if mask > 0]
+        credits = [credit_target(root, ids, placed) for root, ids, mask in row.credits if mask > 0]
+        unstated = sum(1 for _v, mask in row.groups.get(("objectives", 1), []) if mask <= 0)
+        if unstated:
+            left["noOrigin"] += unstated
+        monsters = credits + creatures if KILL_CREDIT_FIRST in row.flags else creatures + credits
+        if any(value <= 0 for value in monsters):
+            left["badCreature"] += sum(1 for value in monsters if value <= 0)
+            monsters = [value for value in monsters if value > 0]
+        if monsters:
+            record["c"] = monsters
+        things = [
+            int(value) for value, mask in row.groups.get(("objectives", 2), []) if mask > 0 and value > 0
+        ]
+        if things:
+            record["o"] = things
+        area: dict[int, list[tuple[int, int]]] = {}
+        for zone, x, y, mask in row.points:
+            if x >= 0 and y >= 0 and mask > 0:
+                area.setdefault(int(zone), []).append((_tenths(x), _tenths(y)))
+            else:
+                left["areaPointUnplaced"] += 1
+        if area:
+            record["a"] = [(zone, tuple(points)) for zone, points in sorted(area.items())]
+        if record:
+            quests[quest] = record
+    places: dict[str, dict[int, list[tuple[int, tuple[tuple[int, int], ...]]]]] = {"n": {}, "o": {}}
+    for letter, key, rows in (("n", "c", npcs), ("o", "o", objects)):
+        named = sorted({ident for record in quests.values() for ident in record.get(key, ())})  # type: ignore[union-attr]
+        for ident in named:
+            row = rows.get(ident)
+            spots = _zone_places(row.points) if row is not None else []
+            if spots:
+                places[letter][ident] = spots
+            else:
+                left["creatureUnplaced" if letter == "n" else "objectUnplaced"] += 1
+    return Targets(quests, places, dict(left))
+
+
+def pack_targets(targets: Targets) -> dict[str, object]:
+    """The `ot` value: { legend = { q, n, o, xy }, q, n, o }, each record one string in the file's own
+    packed format (segments joined by SEPARATOR, a key letter then fixed width numbers; a zone segment
+    the zone then each point's x and y, legend.xy digits each). Widths from the data; nothing signed."""
+    largest: dict[str, dict[str, int]] = {letter: {} for letter in TARGET_TABLES}
+    tenths = [0]
+
+    def note(letter: str, key: str, value: int) -> None:
+        if value < 0:
+            raise OpenSourcesError(f"a negative number in the objective targets' {letter}.{key}")
+        largest[letter][key] = max(largest[letter].get(key, 0), value)
+
+    for record in targets.quests.values():
+        for key in ("c", "o"):
+            for value in record.get(key, ()):  # type: ignore[union-attr]
+                note("q", key, value)
+        for zone, points in record.get("a", ()):  # type: ignore[union-attr]
+            note("q", "a", zone)
+            for x, y in points:
+                tenths.extend((x, y))
+    for letter in ("n", "o"):
+        for spots in targets.places[letter].values():
+            for zone, points in spots:
+                note(letter, "s", zone)
+                for x, y in points:
+                    tenths.extend((x, y))
+    if min(tenths) < 0:
+        raise OpenSourcesError("a point below zero in the objective targets")
+    legend: dict[str, object] = {
+        letter: {key: _digits(top) for key, top in sorted(largest[letter].items())}
+        for letter in TARGET_TABLES
+    }
+    legend[XY] = _digits(max(tenths))
+    xy = int(legend[XY])  # type: ignore[call-overload]
+
+    def zone_segment(letter: str, key: str, zone: int, points: Iterable[tuple[int, int]]) -> str:
+        width = legend[letter][key]  # type: ignore[index]
+        return key + pack_int(zone, width) + "".join(pack_int(x, xy) + pack_int(y, xy) for x, y in points)
+
+    value: dict[str, object] = {"legend": legend, "q": {}, "n": {}, "o": {}}
+    for quest, record in sorted(targets.quests.items()):
+        segments = []
+        for key in ("c", "o"):
+            if key in record:
+                width = legend["q"][key]  # type: ignore[index]
+                segments.append(key + "".join(pack_int(ident, width) for ident in record[key]))  # type: ignore[union-attr]
+        for zone, points in record.get("a", ()):  # type: ignore[union-attr]
+            segments.append(zone_segment("q", "a", zone, points))
+        value["q"][quest] = SEPARATOR.join(segments)  # type: ignore[index]
+    for letter in ("n", "o"):
+        for ident, spots in sorted(targets.places[letter].items()):
+            value[letter][ident] = SEPARATOR.join(  # type: ignore[index]
+                zone_segment(letter, "s", zone, points) for zone, points in spots
+            )
+    return value
+
+
+def unpack_target_record(letter: str, text: str, value: Mapping) -> dict[str, object]:
+    """The inverse of pack_targets for one record, for the tests and as the reference the addon's reader
+    follows: {"c": [ids], "o": [ids], "a": [(zone, ((x, y), ...))]} or {"s": [(zone, ((x, y),) or ())]}."""
+    legend = value["legend"]
+    widths, xy = legend[letter], legend[XY]
+    out: dict[str, object] = {}
+    for segment in text.split(SEPARATOR):
+        key, body = segment[0], segment[1:]
+        if key not in widths or key not in TARGET_KEYS[letter]:
+            raise OpenSourcesError(f"{key!r} is not a key of the objective targets' {letter}")
+        width = widths[key]
+        if key in TARGET_ZONE_KEYS[letter]:
+            zone, rest = unpack_int(body[:width]), body[width:]
+            if len(body) < width or len(rest) % (2 * xy):
+                raise OpenSourcesError("an objective target zone segment of the wrong length")
+            points = tuple(
+                (unpack_int(rest[at : at + xy]), unpack_int(rest[at + xy : at + 2 * xy]))
+                for at in range(0, len(rest), 2 * xy)
+            )
+            out.setdefault(key, []).append((zone, points))  # type: ignore[union-attr]
+        else:
+            if not body or len(body) % width:
+                raise OpenSourcesError("an objective target segment of the wrong length")
+            out[key] = [unpack_int(body[at : at + width]) for at in range(0, len(body), width)]
+    return out
+
+
+def check_targets(value: object) -> None:
+    """Brief Q41, the objective targets' own guard: { legend = { q, n, o, xy }, q, n, o } and nothing else,
+    each legend naming only its table's keys with whole widths, every id a whole number above 0, every
+    record the packed alphabet only and only its table's keys, and each record reading back whole."""
+    if not isinstance(value, Mapping) or set(value) != {"legend", *TARGET_TABLES}:
+        raise GuardError(f"{OBJECTIVE_TARGETS_FIELD} holds only legend, q, n and o")
+    legend = value["legend"]
+    if not isinstance(legend, Mapping) or set(legend) - {*TARGET_TABLES, XY} or XY not in legend:
+        raise GuardError(f"the legend of {OBJECTIVE_TARGETS_FIELD} names a table it does not hold")
+    widths_ok = isinstance(legend[XY], int) and not isinstance(legend[XY], bool) and legend[XY] >= 1
+    for letter in TARGET_TABLES:
+        widths = legend.get(letter, {})
+        if not isinstance(widths, Mapping) or set(widths) - set(TARGET_KEYS[letter]):
+            raise GuardError(f"the legend of {OBJECTIVE_TARGETS_FIELD}.{letter} names a key outside its list")
+        widths_ok = widths_ok and all(
+            isinstance(width, int) and not isinstance(width, bool) and width >= 1 for width in widths.values()
+        )
+    if not widths_ok:
+        raise GuardError(f"the legend of {OBJECTIVE_TARGETS_FIELD} holds a width that is not a whole number")
+    for letter in TARGET_TABLES:
+        records = value[letter]
+        if not isinstance(records, Mapping):
+            raise GuardError(f"{OBJECTIVE_TARGETS_FIELD}.{letter} is not id to packed string")
+        for ident, text in records.items():
+            if (
+                not isinstance(ident, int)
+                or isinstance(ident, bool)
+                or ident < 1
+                or not isinstance(text, str)
+            ):
+                raise GuardError(
+                    f"{OBJECTIVE_TARGETS_FIELD}.{letter} holds a record that is not id to packed string"
+                )
+            if not _RECORD.match(text):
+                raise GuardError(
+                    f"{OBJECTIVE_TARGETS_FIELD}.{letter}[{ident}] holds a byte outside the packed alphabet"
+                )
+            if {segment[:1] for segment in text.split(SEPARATOR)} - set(TARGET_KEYS[letter]):
+                raise GuardError(f"{OBJECTIVE_TARGETS_FIELD}.{letter}[{ident}] holds a key outside its list")
+            try:
+                record = unpack_target_record(letter, text, value)
+            except (OpenSourcesError, KeyError) as exc:
+                raise GuardError(f"{OBJECTIVE_TARGETS_FIELD}.{letter}[{ident}] does not read back") from exc
+            if any(ident_ <= 0 for key in ("c", "o") for ident_ in record.get(key, ())):  # type: ignore[union-attr]
+                raise GuardError(f"{OBJECTIVE_TARGETS_FIELD}.{letter}[{ident}] names an id below 1")
+
+
+def creature_names(composed: Composed, targets: Targets) -> tuple[dict[int, str], dict[str, int]]:
+    """Brief Q41, the owner's "Take" of 2026-11-10 (QuestieDB's creature names for the objective targets
+    nothing of ours names): the upstream's English name of each creature a quest's objectives name (the
+    targets' `c`), whichever layer stated it, held to the rule an object's name is (object_name_fault);
+    and how many have none, by why. Names alone: no title (subName) or other text. The file's own targets
+    choose, so it stays a pure function of the pin: whether a name of ours stands first is the addon's
+    order (its namer is asked last), never this writer's."""
+    named = sorted({ident for record in targets.quests.values() for ident in record.get("c", ())})  # type: ignore[attr-defined]
+    names: dict[int, str] = {}
+    left: Counter[str] = Counter()
+    for creature in named:
+        row = composed.rows["Npc"].get(creature)
+        text = row.texts.get("name", "") if row is not None else ""
+        fault = object_name_fault(text)
+        if fault is None:
+            names[creature] = text
         else:
             left[fault] += 1
     return names, dict(left)
@@ -1578,6 +1919,11 @@ def select_facts(composed: Composed, layer_set: str) -> Selection:
         if prior:
             record["P"] = [value for value, _mask in prior]
             layers["P"] = [origin(mask) for _value, mask in prior]
+        # Brief ST1: the repeatable bit of the quest's special flags, where it stands, by first origin.
+        flags = row.scalars.get("specialFlags")
+        if flags and int(flags[0]) & QUEST_FLAGS_KEPT and take(flags[1]):
+            record["f"] = int(flags[0]) & QUEST_FLAGS_KEPT
+            layers["f"] = origin(flags[1])
         _keep(records["q"], facts, fact_layers, "q", quest, record, layers)
         # Brief RS1: the skill line and rank the quest asks for, a key of its own beside the records.
         skill = row.pairs.get("requiredSkill")
@@ -1619,7 +1965,10 @@ def select_facts(composed: Composed, layer_set: str) -> Selection:
             layers["z"] = origin(held[1])
         _keep(records["o"], facts, fact_layers, "o", obj, record, layers)
 
-    names, names_left = object_names(composed, records)
+    targets = objective_targets(composed)
+    named_objects = {ident for record in targets.quests.values() for ident in record.get("o", ())}  # type: ignore[attr-defined]
+    names, names_left = object_names(composed, records, named_objects)
+    creatures_named, creatures_left = creature_names(composed, targets)
     return Selection(
         layer_set,
         records,
@@ -1630,6 +1979,9 @@ def select_facts(composed: Composed, layer_set: str) -> Selection:
         object_names=names,
         names_left_out=names_left,
         required_skills=required_skills,
+        targets=targets,
+        creature_names=creatures_named,
+        creature_names_left_out=creatures_left,
     )
 
 
@@ -1721,10 +2073,21 @@ OBJECT_NAMES_FIELD = "on"
 # The owner, 2026-11-09, on his item 593: "yes" to the two required skill fields (this one and
 # EraSources.lua's `rs`), approving the extra key on this list. Numbers alone.
 REQUIRED_SKILLS_FIELD = "rs"
+# Brief Q41, the one key added since RS1: `ot`, the objective targets (objective_targets): what each
+# quest's objectives name, a creature, an object or the area its triggerEnd completes in, and where each
+# named creature and object stands, from every layer. The owner, 2026-11-10, on Lost in Battle (4921):
+# "the location of the wife in this quest (questie has the location) I feel like we could add it too",
+# his go to use the upstream's objective targets. Numbers alone, under its own guard (check_targets).
+OBJECTIVE_TARGETS_FIELD = "ot"
+# Brief Q41, the one key added beside `ot`: `cn`, creature id -> the upstream's English name, for the
+# creatures a quest's objectives name (creature_names). The owner, 2026-11-10: "Take" (QuestieDB's
+# creature names for the objective targets nothing of ours names, 117 at the pin), approving the key.
+# Creatures an objective names alone, names alone: no title, no other text.
+CREATURE_NAMES_FIELD = "cn"
 TOP_FIELDS = frozenset(
     {
         *("v", PIN_FIELD, LAYERS_FIELD, "legend", "signed", "i", "q", "n", "o"),
-        *(OBJECT_NAMES_FIELD, REQUIRED_SKILLS_FIELD),
+        *(OBJECT_NAMES_FIELD, REQUIRED_SKILLS_FIELD, OBJECTIVE_TARGETS_FIELD, CREATURE_NAMES_FIELD),
     }
 )
 # A commit id as the pin states one (Pin's own check): 40 lower case letters and digits.
@@ -1843,9 +2206,10 @@ def unpack_record(letter: str, text: str, legend: Mapping, signed: Mapping) -> d
 def pack_selection(
     selection: Selection, *, commit: str | None = None, layer_set: str | None = None
 ) -> dict[str, object]:
-    """The module's value: { v, u, L, legend, signed, i, q, n, o, on, rs }; u (the upstream commit) and L
-    (the layer set) where given, which `build` always gives (brief QZ6); on the object names (brief FFP);
-    rs the quests' required skills (brief RS1), each { skill line, rank }."""
+    """The module's value: { v, u, L, legend, signed, i, q, n, o, on, rs, ot }; u (the upstream commit) and
+    L (the layer set) where given, which `build` always gives (brief QZ6); on the object names (brief FFP);
+    rs the quests' required skills (brief RS1), each { skill line, rank }; ot the objective targets
+    (brief Q41, pack_targets)."""
     legend, signed = legend_of(selection)
     value: dict[str, object] = {"v": FORMAT_VERSION, "legend": legend, "signed": signed}
     if commit is not None:
@@ -1861,6 +2225,8 @@ def pack_selection(
     value[REQUIRED_SKILLS_FIELD] = {
         quest: [skill, rank] for quest, (skill, rank) in sorted(selection.required_skills.items())
     }
+    value[OBJECTIVE_TARGETS_FIELD] = pack_targets(selection.targets or Targets({}, {"n": {}, "o": {}}, {}))
+    value[CREATURE_NAMES_FIELD] = dict(sorted(selection.creature_names.items()))
     return value
 
 
@@ -1917,6 +2283,35 @@ def check_value(value: Mapping) -> None:
             raise GuardError(
                 f"{REQUIRED_SKILLS_FIELD}[{ident}] holds something other than a skill line and rank"
             )
+    # Brief Q41: the objective targets, under their own guard.
+    if OBJECTIVE_TARGETS_FIELD in value:
+        check_targets(value[OBJECTIVE_TARGETS_FIELD])
+    # Brief Q41 (the owner's "Take"): creature id -> a name that passes the object names' rule, and only
+    # for a creature the objective targets name.
+    creatures = value.get(CREATURE_NAMES_FIELD) or {}
+    if not isinstance(creatures, Mapping):
+        raise GuardError(f"{CREATURE_NAMES_FIELD} is not creature id to name")
+    targeted = _targeted_creatures(value.get(OBJECTIVE_TARGETS_FIELD))
+    for ident, name in creatures.items():
+        if not isinstance(ident, int) or isinstance(ident, bool) or ident < 1 or not isinstance(name, str):
+            raise GuardError(f"{CREATURE_NAMES_FIELD} holds a row that is not creature id to name")
+        if object_name_fault(name) is not None:
+            raise GuardError(f"{CREATURE_NAMES_FIELD}[{ident}] holds something other than a plain name")
+        if ident not in targeted:
+            raise GuardError(f"{CREATURE_NAMES_FIELD}[{ident}] names a creature no objective names")
+
+
+def _targeted_creatures(targets: object) -> set[int]:
+    """The creatures the objective targets' quest records name (their `c`), or none."""
+    out: set[int] = set()
+    if not isinstance(targets, Mapping) or not isinstance(targets.get("q"), Mapping):
+        return out
+    for text in targets["q"].values():
+        try:
+            out.update(unpack_target_record("q", text, targets).get("c", ()))  # type: ignore[arg-type]
+        except (OpenSourcesError, KeyError, TypeError):
+            continue
+    return out
 
 
 # ----- the build --------------------------------------------------------------------------------
@@ -1955,6 +2350,20 @@ class OpenSources:
         self.stats = stats
         self.selection = selection
         self.levels = levels or {"q": {}, "n": {}}
+
+
+def target_counts(targets: Targets | None) -> dict[str, int]:
+    """Brief Q41: how many quests the objective targets hold, and their creatures, objects, areas and the
+    creatures and objects they place."""
+    quests = targets.quests if targets else {}
+    places = targets.places if targets else {"n": {}, "o": {}}
+    return {
+        "targetQuests": len(quests),
+        "targetCreatures": sum(len(record.get("c", ())) for record in quests.values()),  # type: ignore[arg-type]
+        "targetObjects": sum(len(record.get("o", ())) for record in quests.values()),  # type: ignore[arg-type]
+        "targetAreas": sum(1 for record in quests.values() if "a" in record),
+        "targetPlaces": len(places["n"]) + len(places["o"]),
+    }
 
 
 def composed_levels(composed: Composed) -> dict[str, dict[int, int]]:
@@ -2000,6 +2409,9 @@ def build(tree: UpstreamTree, *, layer_set: str, lua: str) -> OpenSources:
         "objectNamesLeftOut": sum(selection.names_left_out.values()),
         "requiredSkills": len(selection.required_skills),
         "requiredSkillsRemoved": sum(1 for skill, _rank in selection.required_skills.values() if skill == 0),
+        **target_counts(selection.targets),
+        "creatureNames": len(selection.creature_names),
+        "creatureNamesLeftOut": sum(selection.creature_names_left_out.values()),
     }
     return OpenSources(
         _BUILT,
@@ -2022,11 +2434,14 @@ _STAMP = re.compile(r"^[A-Za-z0-9_.:+\-]{1,64}$")
 CREDIT = (
     f"Open source quest and world data for WoW Forever, derived from {UPSTREAM_NAME} "
     f"({UPSTREAM_REPOSITORY}), the Questie project's database, at commit {QUESTIEDB_COMMIT} "
-    f"({QUESTIEDB_VERSION}). Ids and numbers, and the names of the objects they name: which creature, "
+    f"({QUESTIEDB_VERSION}). Ids and numbers, the names of the objects they name and of the creatures "
+    "quest objectives name: which creature, "
     "object or item starts, ends or "
-    "asks for a quest, a quest's levels, sides, classes, chain and required profession, which creature "
+    "asks for a quest, a quest's levels, sides, classes, chain, required profession and whether it repeats, "
+    "which creature "
     "or object drops "
-    "an item, which creature sells it, which quest rewards it, and where creatures and objects "
+    "an item, which creature sells it, which quest rewards it, which creature, object or area a quest's "
+    "objectives name, and where creatures and objects "
     "stand (the upstream's own zone ids and map percentages). WoW Forever may differ; the addon "
     "shows these as predicted."
 )
@@ -2051,7 +2466,8 @@ UPSTREAM_LINEAGE = (
 MODIFICATION_NOTICE = (
     f"Modified: this file is a modified, reduced derivation of {UPSTREAM_NAME}, made by the ItemTree "
     "pipeline on the Generated date above. The changes: a selection (the layers and the key set "
-    "this header names; of its text only the names of the objects these facts name: no other names, "
+    "this header names; of its text only the names of the objects these facts name and of the "
+    "creatures quest objectives name: no other names, "
     "and no quest text, drop rates, waypoints, comments or addresses), a "
     "composition (the upstream's Forever correction layers applied over its base, in its own order) "
     "and a re-keying (each fact under the short keys above, packed)."
@@ -2107,11 +2523,15 @@ def header_lines(table: OpenSources, *, generated: str, version: str) -> list[st
         f"Generated: {generated} | Pipeline: {version}",
         "A gap filler from one pinned open source quest database: the addon uses a fact here only "
         "where its own data and the Classic Era files state nothing of that kind. Ids and numbers, and "
-        "the names of the objects they name. docs/open-sources.md in the pipeline is the contract.",
+        "the names of the objects they name and of the creatures quest objectives name. "
+        "docs/open-sources.md in the pipeline is the contract.",
         f"{{ v = {FORMAT_VERSION}, {PIN_FIELD}, {LAYERS_FIELD}, legend, signed, i = {{ [itemId] = record }}, "
         "q = { [questId] = record }, n = { [creatureId] = record }, o = { [objectId] = record }, "
         f"{OBJECT_NAMES_FIELD} = {{ [objectId] = name }}, "
-        f"{REQUIRED_SKILLS_FIELD} = {{ [questId] = {{ skill line, rank }} }} }}. v is "
+        f"{REQUIRED_SKILLS_FIELD} = {{ [questId] = {{ skill line, rank }} }}, "
+        f"{OBJECTIVE_TARGETS_FIELD} = {{ legend, q = {{ [questId] = record }}, "
+        "n = { [creatureId] = record }, o = { [objectId] = record } }, "
+        f"{CREATURE_NAMES_FIELD} = {{ [creatureId] = name }} }}. v is "
         f"the format version; refuse any other. {PIN_FIELD} is the upstream commit and {LAYERS_FIELD} the "
         "layer set this file was built from, the stamp line's own.",
         f"record: segments joined by {SEPARATOR!r}; a segment is its key letter then fixed width numbers "
@@ -2123,7 +2543,8 @@ def header_lines(table: OpenSources, *, generated: str, version: str) -> list[st
         "that sell it, r quests that reward it, s the quest it starts. q: g G I creatures, objects "
         "and items that start it, e E creatures and objects that end it, n items it asks for, p the "
         "item it hands over, l level, m minimum level, x race mask (bits 32 and 33 are Forever's "
-        "own races), k class mask, N next quest, P prior quests. n: s spawns, f flags (vendor 4, "
+        "own races), k class mask, N next quest, P prior quests, f flags (repeatable 1). n: s spawns, f "
+        "flags (vendor 4, "
         "trainer 16), l L levels, z zone id, a side (1 Alliance, 2 Horde, 3 both). o: s spawns, z "
         "zone id. Zone ids are the upstream's own area ids and points its own map percentages. "
         f"{OBJECT_NAMES_FIELD}: the upstream's English name of each object this file names (a row of o, "
@@ -2131,7 +2552,16 @@ def header_lines(table: OpenSources, *, generated: str, version: str) -> list[st
         f"{REQUIRED_SKILLS_FIELD}: the skill a quest asks the player to have, {{ skill line, rank }} (the "
         "SkillLine id: 164 Blacksmithing, 171 Alchemy, 202 Engineering, ...), for the quests whose "
         "requiredSkill was first stated by a layer of this set; { 0, 0 } where a layer of this set took "
-        "the pair away: the quest asks for no skill.",
+        "the pair away: the quest asks for no skill. "
+        f"{OBJECTIVE_TARGETS_FIELD}: what each quest's objectives name, from every layer "
+        "(the base among them: no Classic Era file names an objective's creature, object or "
+        "area), its own legend and the same packed records: q c the creatures (a kill credit "
+        "objective's one creature among them) and o the objects, in the upstream's objective "
+        "order, a the area its triggerEnd completes in (the zone, then its points); n and o, "
+        "each named creature and object the upstream places: s one segment per zone, the most "
+        "spawns first, with its one point where the zone holds one spawn and none where it "
+        f"holds more. {CREATURE_NAMES_FIELD}: the upstream's English name of each creature a quest's "
+        "objectives name (ot's c), a missing name or a placeholder left out.",
         f"Layers: {table.layer_set}, {LAYER_WORDS[table.layer_set]}. A creature drop list longer than "
         f"{MASS_DROPPERS} is a world drop and is left out whole.",
         CREDIT,
@@ -2139,7 +2569,10 @@ def header_lines(table: OpenSources, *, generated: str, version: str) -> list[st
         f"{counts['items']} items, {counts['quests']} quests, {counts['npcs']} creatures, "
         f"{counts['objects']} objects; {counts['facts']} facts; {counts['objectNames']} object names, "
         f"{counts['objectNamesLeftOut']} objects with none; {counts['requiredSkills']} required skills "
-        f"({counts['requiredSkillsRemoved']} taken away).",
+        f"({counts['requiredSkillsRemoved']} taken away); objective targets for {counts['targetQuests']} "
+        f"quests ({counts['targetCreatures']} creatures, {counts['targetObjects']} objects, "
+        f"{counts['targetAreas']} areas; {counts['targetPlaces']} placed); {counts['creatureNames']} "
+        f"creature names, {counts['creatureNamesLeftOut']} target creatures with none.",
     ]
 
 
@@ -2191,6 +2624,10 @@ def summary_lines(table: OpenSources, text: str) -> list[str]:
         f"  object names: {table.counts['objectNames']:,}; none for {nameless}",
         f"  required skills: {table.counts['requiredSkills']:,} ({table.counts['requiredSkillsRemoved']:,} "
         "taken away)",
+        f"  objective targets: {table.counts['targetQuests']:,} quests, {table.counts['targetCreatures']:,} "
+        f"creatures, {table.counts['targetObjects']:,} objects, {table.counts['targetAreas']:,} areas; "
+        f"{table.counts['targetPlaces']:,} placed; {table.counts['creatureNames']:,} creature names, "
+        f"{table.counts['creatureNamesLeftOut']:,} with none",
         f"  kept values by first origin: {origin}",
         f"  left out: {left}",
     ]

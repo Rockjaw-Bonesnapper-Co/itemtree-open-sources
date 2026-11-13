@@ -5,7 +5,8 @@
 The composer behind OpenSources.lua (brief QZ2). It applies the pinned upstream database's Forever
 layers over its base, in that database's own load order, and remembers which layer stated each
 fact, then writes the few fields the file keeps: numbers, and an object's name in hexadecimal (brief
-FFP, the owner's word of 2026-11-05 on item 465). open_sources.py runs it (compose()); nothing else
+FFP, the owner's word of 2026-11-05 on item 465), and a creature's the same way (brief Q41, the owner's
+"Take" of 2026-11-10). open_sources.py runs it (compose()); nothing else
 should.
 
 Lua 5.4 only (it checks _VERSION first): it relies on 64 bit integers (a race mask uses bits 32
@@ -44,7 +45,15 @@ Protocol (open_sources.compose writes stdin and reads stdout):
                                                             rank); "0 0" where a layer cleared
                                                             the pair while it stood, the mask
                                                             then the bits of the clearing layers
-            P <entity> <id> <zone> <x> <y> <mask>           one spawn point
+            P <entity> <id> <zone> <x> <y> <mask>           one spawn point; on a Quest (brief Q41)
+                                                            one point of its triggerEnd area, the
+                                                            mask the whole field's
+            K <entity> <id> <field> <root> <ids> <mask>     brief Q41: one kill credit objective
+                                                            (objectives group 5), its root creature
+                                                            (0 for none) and the creatures that
+                                                            give the credit, comma separated
+            F <entity> <id> <flag>                          brief Q41: a quest the upstream marks
+                                                            killCreditObjectiveFirst
             # <layer> <file> <rows> <created> <steps>       what each provider did
           then "END <lines>". A mask is the bits of every layer that stated the value while it
           stood (bit 2^i for LAYERS[i]); its lowest bit is the value's first origin.
@@ -285,7 +294,11 @@ local SCHEMA = {
     requiredRaces = false,
     requiredClasses = false,
     nextQuestInChain = false,
+    -- Brief ST1: the upstream's special flags, of which the file keeps the repeatable bit.
+    specialFlags = false,
     requiredSkill = "pair",
+    -- Brief Q41: the area a quest's exploration or event objective completes in.
+    triggerEnd = "trigger",
   },
   Npc = {
     spawns = "spawnlist",
@@ -294,6 +307,8 @@ local SCHEMA = {
     maxLevel = false,
     zoneID = false,
     friendlyToFaction = false,
+    -- Brief Q41 (the owner's "Take" of 2026-11-10): the name of a creature a quest objective names.
+    name = false,
   },
   Item = {
     npcDrops = "idarray",
@@ -790,16 +805,39 @@ end
 -------------------------------------------------------------------------------- out: numbers and an object's name
 -- The fields OpenSources.lua is made from, by the upstream meta names. Nothing else leaves. Only an
 -- object's name is text (brief FFP, item 466), and it leaves as hexadecimal; open_sources.py decides
--- whether the file keeps it. A pair (brief RS1) leaves as its two numbers, exactly two.
+-- whether the file keeps it. A pair (brief RS1) leaves as its two numbers, exactly two. Brief Q41: a
+-- kill credit objective leaves as its creature ids and a triggerEnd as its points, never their text;
+-- and a creature's name leaves as an object's does (the owner's "Take" of 2026-11-10), for
+-- open_sources.py to keep only where a quest objective names the creature.
 local PROJECT = {
   Quest = {
-    scalar = { "sourceItemId", "questLevel", "requiredLevel", "requiredRaces", "requiredClasses", "nextQuestInChain" },
+    -- Brief ST1: and its special flags, of which open_sources.py keeps the repeatable bit alone.
+    scalar = {
+      "sourceItemId",
+      "questLevel",
+      "requiredLevel",
+      "requiredRaces",
+      "requiredClasses",
+      "nextQuestInChain",
+      "specialFlags",
+    },
     list = { "preQuestSingle", "preQuestGroup" },
-    grouped = { startedBy = { 1, 2, 3 }, finishedBy = { 1, 2 }, objectives = { 3 } },
+    -- Brief Q41: and the creatures (1) and objects (2) its objectives name, beside the items (3).
+    grouped = { startedBy = { 1, 2, 3 }, finishedBy = { 1, 2 }, objectives = { 1, 2, 3 } },
     -- Brief RS1: the skill line and rank a quest asks for.
     pair = { "requiredSkill" },
+    -- Brief Q41: the kill credit objectives (objectives group 5) and the triggerEnd area's points.
+    credits = "objectives",
+    trigger = "triggerEnd",
   },
-  Npc = { scalar = { "npcFlags", "minLevel", "maxLevel", "zoneID" }, side = "friendlyToFaction", spawns = "spawns" },
+  Npc = {
+    scalar = { "npcFlags", "minLevel", "maxLevel", "zoneID" },
+    side = "friendlyToFaction",
+    spawns = "spawns",
+    -- Brief Q41 (the owner's "Take" of 2026-11-10): a creature's name, in hexadecimal as an object's is;
+    -- open_sources.py keeps it only for a creature a quest objective names.
+    text = "name",
+  },
   Item = { scalar = { "startQuest" }, list = { "npcDrops", "objectDrops", "itemDrops", "vendors", "questRewards" } },
   Object = { scalar = { "zoneID" }, spawns = "spawns", text = "name" },
 }
@@ -906,6 +944,57 @@ for _, entity in ipairs(ENTITIES) do
         }, "\t")
       elseif cleared then
         out[#out + 1] = tconcat({ "R", entity, sformat("%d", id), name, "0", "0", sformat("%d", cleared) }, "\t")
+      end
+    end
+    -- Brief Q41: each kill credit objective, { { creature ids }, root creature, text, icon }: its root (0
+    -- where it names none) and the creatures that give the credit, numbers only; never its text.
+    if project.credits then
+      local field = index[project.credits]
+      local value = field and row[field]
+      local list = type(value) == "table" and value[5] or nil
+      if type(list) == "table" then
+        local og = origins[field] and origins[field].g or {}
+        for _, elem in ipairs(list) do
+          if type(elem) == "table" and type(elem[1]) == "table" then
+            local ids = {}
+            for _, credited in ipairs(elem[1]) do
+              ids[#ids + 1] = number(credited, where .. " credit")
+            end
+            if #ids > 0 then
+              local mask = og[5] and og[5][elemkey(shape(entity, field), 5, elem)] or 0
+              local root = elem[2] ~= nil and number(elem[2], where .. " credit root") or "0"
+              out[#out + 1] = tconcat({
+                "K", entity, sformat("%d", id), project.credits, root, tconcat(ids, ","), sformat("%d", mask),
+              }, "\t")
+            end
+          end
+        end
+      end
+      if modules.QuestieCorrections.killCreditObjectiveFirst[id] == true then
+        out[#out + 1] = tconcat({ "F", entity, sformat("%d", id), "killCreditObjectiveFirst" }, "\t")
+      end
+    end
+    -- Brief Q41: the triggerEnd area, { text, { [zone] = { { x, y }, ... } } }: its points, as spawns are
+    -- written, under the whole field's mask; never its text.
+    if project.trigger then
+      local field = index[project.trigger]
+      local value = field and row[field]
+      local zones = type(value) == "table" and value[2] or nil
+      if type(zones) == "table" then
+        local mask = origins[field] and origins[field].m or 0
+        for _, zone in ipairs(sorted_keys(zones)) do
+          local list = zones[zone]
+          if mtype(zone) == "integer" and type(list) == "table" then
+            for _, point in ipairs(list) do
+              if type(point) == "table" and type(point[1]) == "number" and type(point[2]) == "number" then
+                out[#out + 1] = tconcat({
+                  "P", entity, sformat("%d", id), sformat("%d", zone),
+                  number(point[1], where .. " x"), number(point[2], where .. " y"), sformat("%d", mask),
+                }, "\t")
+              end
+            end
+          end
+        end
       end
     end
     if project.text then

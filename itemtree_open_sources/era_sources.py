@@ -176,6 +176,32 @@ the waypoints) and placed on a client build's own zone maps by the caller alone:
 they ship in ItemTree's EraPlaces.lua, and since brief EK1 they are made in its own unmirrored
 modules (era_places, era_pins). No coordinate of any kind is in this module's file.
 
+Since 2026-10-02 (brief PT2, on the owner's ruling of 2026-10-02) one more column of
+`creature_template` is read for the hunter's Pets tab, `CreatureTypeFlags`, of which ONE bit is
+kept, the tameable bit (0x1), and every other flag is dropped as the row is read: it is what says
+a hunter can tame a creature, and it ships in `tb`, one number per tameable creature id packing the
+name's index into `s` with the Family, level range and Rank the template already states, so the
+tab can list the beasts by family and mark a rare or an elite one. A tameable name that drops,
+sells, trains and gives nothing ships its kind in `ck` and its display id in `cd` by exactly the
+rules those columns already follow (and its pins in the caller's EraPlaces.lua), so every tameable
+has a portrait and a map. The same ruling reads `quest_template.RequiredClasses` (brief INT1b reads
+it too, for `qa`), so that `qh` can list the quests the hunter can take and at least one other class
+cannot (the hunter's taming and pet quests), each titled through `qt` like any other quest. Numbers
+only: no prose, no comments, no scripts, and nothing else of either row.
+
+Since 2026-10-02 (brief PT15, on the owner's ruling of 2026-10-02, Pets QA round 2 item 8) the
+hunter's stable masters and pet trainers ship too. From `creature_template.NpcFlags`, ONE bit is
+kept, the stable master bit (UNIT_NPC_FLAG_STABLEMASTER, 0x2000 in the CMaNGOS classic enum), and
+every other flag is dropped as the row is read; from `TrainerType` (read since brief TR6) only
+whether it is TRAINER_TYPE_PETS (3) is asked. A pet trainer is a creature of that type that teaches
+at least one spell by the `npc_trainer` rows already read, which leaves out the warlock's Demon
+Trainers (the same type in the dump, teaching nothing there) and the unused and quest only
+"trainers" of that type. Each such NAME ships in `hs` with what it is (1 stable master, 2 pet
+trainer, 3 both), and only those names gain, by exactly the rules vendors and trainers already
+follow, their kind in `ck`, their display id in `cd` and their `SubName` title in `st` (their pins
+and side are the caller's, EraPlaces.lua's `mp` and `cf`). Nothing else of either column, and
+nothing else of the row.
+
 Two inputs are pinned, fetched into the gitignored cache, verified by size and sha256 every
 run, and never committed:
 
@@ -682,6 +708,44 @@ TC_COST_DIGITS = 3
 TC_RECORD_DIGITS = TC_SPELL_DIGITS + TC_LEVEL_DIGITS + TC_COST_DIGITS
 CLASS_IDS = frozenset({1, 2, 3, 4, 5, 7, 8, 9, 11})
 
+# ----- the tameable beasts and the hunter quests (brief PT2) ----------------------------------
+#
+# creature_template.CreatureTypeFlags bit 0x1 (CREATURE_TYPEFLAGS_TAMEABLE): a hunter can tame
+# the creature. The one bit of the column that is kept; every other flag is dropped on read.
+CREATURE_TYPE_FLAG_TAMEABLE = 0x1
+# A tameable whose name holds the whole word "test" ("TEST WOLF (ALPHA FIRST)", "Twain Test
+# Prop") is a developer's creature, not a beast in the world, and is refused for tb alone. The
+# word, not the letters: is_scaffolding stays narrow for every other table, as it explains.
+TAME_TEST_NAME = re.compile(r"\btest\b", re.IGNORECASE)
+
+# One integer per tameable creature id in `tb`, packed like `ck` with the cheapest fields
+# highest: name + TM_NAME_SPAN * (MinLevel + TM_LEVEL_SPAN * (Family + TM_FAMILY_SPAN *
+# (MaxLevel less MinLevel + TM_BAND_SPAN * Rank))). Rank is 0 for all but a handful and the band
+# is 0 to 2 for nearly all, so most values stay at nine digits. The largest value is under
+# 2 ** 38, far inside what a Lua 5.1 double holds exactly. pack_tame fails the build rather than
+# clamp a name index that outgrows its span.
+TM_NAME_SPAN = 32768  # the name's index into s, 1 to 32,767
+TM_LEVEL_SPAN = KIND_LEVEL_SPAN  # MinLevel, 0 to 127
+TM_FAMILY_SPAN = KIND_FAMILY_SPAN  # the beast Family, 0 to 63
+TM_BAND_SPAN = KIND_BAND_SPAN  # MaxLevel less MinLevel, 0 to 63
+TM_RANK_SPAN = 8  # CMaNGOS Rank: 0 normal, 1 elite, 2 rare elite, 3 boss, 4 rare
+
+# A quest is a hunter quest (`qh`) where its class mask (EraInput.quest_classes, quest_class_mask:
+# RequiredClasses joined with a class ZoneOrSort, bit = 1 << (class id - 1)) holds the hunter's bit
+# and leaves at least one of the other playable classes out (CLASS_MASK_PLAYABLE, below).
+CLASS_MASK_HUNTER = 1 << (3 - 1)
+
+# ----- the stable masters and the pet trainers (brief PT15) ------------------------------------
+#
+# creature_template.NpcFlags bit 0x2000, UNIT_NPC_FLAG_STABLEMASTER in the CMaNGOS classic enum
+# (1.12; later expansions moved it to 0x400000). The one bit of the column that is kept. A pet
+# trainer is a creature whose TrainerType is TRAINER_TYPE_PETS (above, brief TR6) and that teaches a
+# spell through npc_trainer (_hunter_npcs): the dump gives the warlock's Demon Trainers that type too.
+NPC_FLAG_STABLEMASTER = 0x2000
+# What an `hs` value says about a name: a bit each, so 3 is a name that is both.
+HS_STABLE_MASTER = 1
+HS_PET_TRAINER = 2
+
 # creature.MovementType 2: the spawn walks its waypoints.
 MOVEMENT_WAYPOINT = 2
 
@@ -750,6 +814,44 @@ def vendor_kind(packed: int, creature_too: bool) -> int:
     creature some creature row names as well. See KIND_VENDOR_BOTH for the layout."""
     both = KIND_VENDOR_BOTH if creature_too else 0
     return -(2 * packed + both + 1)
+
+
+def pack_tame(name: int, family: int, min_level: int, max_level: int, rank: int) -> int:
+    """One `tb` value (brief PT2): a tameable creature's name index, Family, levels and Rank.
+
+    See TM_NAME_SPAN for the order. The name index fails the build rather than clamp, because a
+    wrong name is a wrong beast; the other fields clamp to their spans the way pack_kind's do.
+    """
+    if name < 0 or name >= TM_NAME_SPAN:
+        raise EraSourcesError(f"name index {name} does not fit a tb value (span {TM_NAME_SPAN})")
+    low = max(0, min(min_level, TM_LEVEL_SPAN - 1))
+    band = max(0, min(max(max_level, low) - low, TM_BAND_SPAN - 1))
+    beast = max(0, min(family, TM_FAMILY_SPAN - 1))
+    grade = max(0, min(rank, TM_RANK_SPAN - 1))
+    upper = beast + TM_FAMILY_SPAN * (band + TM_BAND_SPAN * grade)
+    return name + TM_NAME_SPAN * (low + TM_LEVEL_SPAN * upper)
+
+
+def unpack_tame(value: int) -> tuple[int, int, int, int, int]:
+    """The inverse of pack_tame: (name index, family, min level, max level, rank)."""
+    name = value % TM_NAME_SPAN
+    value //= TM_NAME_SPAN
+    low = value % TM_LEVEL_SPAN
+    value //= TM_LEVEL_SPAN
+    family = value % TM_FAMILY_SPAN
+    value //= TM_FAMILY_SPAN
+    band = value % TM_BAND_SPAN
+    rank = value // TM_BAND_SPAN
+    return name, family, low, low + band, rank
+
+
+def is_hunter_quest(classes: int) -> bool:
+    """Brief PT2: a class mask the hunter is in and at least one other playable class is not.
+
+    0 (every class) and a mask holding every playable class are class neutral and are not hunter
+    quests."""
+    mask = classes & CLASS_MASK_PLAYABLE
+    return bool(mask & CLASS_MASK_HUNTER) and mask != CLASS_MASK_PLAYABLE
 
 
 def pack_quests(quests: Sequence[int]) -> str:
@@ -1057,6 +1159,12 @@ class CreatureFacts:
     # Brief CT1: `TrainerClass`, the class a class trainer teaches (a ChrClasses id, CLASS_IDS), 0
     # for every other creature. A plain number, read so `tc` can say which class a list is for.
     trainer_class: int = 0
+    # Brief PT2, the owner's ruling of 2026-10-02: CreatureTypeFlags bit 0x1, a hunter can tame
+    # it. The one bit of that column that is kept.
+    tameable: bool = False
+    # Brief PT15, the owner's ruling of 2026-10-02: NpcFlags bit 0x2000, a stable master. The one
+    # bit of that column that is kept (whether it is a pet trainer is trainer_type's answer).
+    stable_master: bool = False
 
 
 @dataclass(frozen=True)
@@ -1473,6 +1581,13 @@ class EraSources:
     # Brief W12: questId -> the items it asks the player to bring with their counts, packed by
     # pack_requires, for every kept quest that asks for an item this build ships.
     quest_requires: dict[int, str] = field(default_factory=dict)
+    # Brief PT2: a tameable creature id -> pack_tame(its name's index into `s`, Family, levels,
+    # Rank), and the hunter quests (is_hunter_quest), quest id ascending. Shipped as `tb` and `qh`.
+    tameables: dict[int, int] = field(default_factory=dict)
+    hunter_quests: list[int] = field(default_factory=list)
+    # Brief PT15: a stable master's or pet trainer's NAME index into `s` -> HS_STABLE_MASTER,
+    # HS_PET_TRAINER or both added together. Shipped as `hs`.
+    hunter_npcs: dict[int, int] = field(default_factory=dict)
     # Brief QN1: questId -> (c, cl), its position in a chain of quests that share its title and
     # the chain's length, for every quest quest_chains numbers. Shipped as `qc`.
     quest_chains: dict[int, tuple[int, int]] = field(default_factory=dict)
@@ -1583,6 +1698,14 @@ class EraSources:
         # Brief RS1: the skill line and rank each quest asks for, absent where none ships.
         if self.required_skills:
             value["rs"] = self.required_skills_value()
+        # Briefs PT2 and PT15: the Pets tab's beasts, hunter quests and hunter NPCs, each absent where
+        # none ships.
+        if self.tameables:
+            value["tb"] = dict(self.tameables)
+        if self.hunter_quests:
+            value["qh"] = list(self.hunter_quests)
+        if self.hunter_npcs:
+            value["hs"] = dict(self.hunter_npcs)
         if generated:
             value["g"] = generated
         check_gpl_value(value, self.blank)
@@ -1610,10 +1733,16 @@ class EraSources:
 # spell_template's learn effect), on the owner's ruling of 2026-11-06 ("Add it gpl field").
 # Brief RS1 adds `rs`, the skill line and rank a quest asks for (quest_template.RequiredSkill and
 # RequiredSkillValue), on the owner's "yes" of 2026-11-09 to the two required skill fields (item 593).
+# Briefs PT2 and PT15 (feature/pets, before this list existed) add `tb` (creature_template's tameable
+# bit with the Family, levels and Rank it already states), `qh` (the hunter quests, from the same class
+# mask `qa` reads) and `hs` (the stable master bit of NpcFlags and the pets TrainerType), on the owner's
+# rulings of 2026-10-02 for the Pets tab (feature/pets-data cffe382 and 6bf108c). The tameables were
+# `tm` on that branch; brief PX1 renamed them `tb` when the branch met main, where EraPlaces.lua's `tm`
+# (ours, addon brief TW1: a class spell's races) takes that key in the joined table.
 GPL_FIELDS = frozenset(
     {
         *("s", "r", "qt", "ck", "cd", "ci", "oi", "qg", "og", "st", "tr", "tv", "tc", "qr"),
-        *("qc", "qe", "ql", "qa", "qw", "qo", "qp", "qs", "rs", "x", "xl", "g"),
+        *("qc", "qe", "ql", "qa", "qw", "qo", "qp", "qs", "rs", "tb", "qh", "hs", "x", "xl", "g"),
     }
 )
 # The keys a packed module adds beside them (pack_module).
@@ -2086,6 +2215,10 @@ def _absorb(
             trainer_template=_int(col("TrainerTemplateId")),
             trainer_type=_int(col("TrainerType")),
             trainer_class=_int(col("TrainerClass")),
+            # Brief PT2, the owner's ruling of 2026-10-02: the tameable bit and no other flag.
+            tameable=bool(_int(col("CreatureTypeFlags")) & CREATURE_TYPE_FLAG_TAMEABLE),
+            # Brief PT15, the owner's ruling of 2026-10-02: the stable master bit and no other flag.
+            stable_master=bool(_int(col("NpcFlags")) & NPC_FLAG_STABLEMASTER),
         )
         return
     if table in ("npc_trainer", "npc_trainer_template"):
@@ -4080,6 +4213,80 @@ def _class_trainer_lists(
     return numbers, lists, list_classes
 
 
+def _tameables(era_input: CmangosFacts, dropped: dict[str, int]) -> dict[int, CreatureFacts]:
+    """Brief PT2: every creature id whose CreatureTypeFlags hold the tameable bit, id ascending.
+
+    A creature with no name or a scaffolding one is refused and counted under `tameUnnamed`: there
+    is no page to open it on and nothing to call it. One whose name holds the word "test"
+    (TAME_TEST_NAME) is refused and counted under `tameTestName`. Keyed by the creature ID, not the
+    name, because a hunter tames one creature and two of one name can differ in level or rank.
+    """
+    found: dict[int, CreatureFacts] = {}
+    for creature_id in sorted(era_input.creatures):
+        facts = era_input.creatures[creature_id]
+        if not facts.tameable:
+            continue
+        if not facts.name or is_scaffolding(facts.name):
+            dropped["tameUnnamed"] += 1
+            continue
+        if TAME_TEST_NAME.search(facts.name):
+            dropped["tameTestName"] += 1
+            continue
+        found[creature_id] = facts
+    return found
+
+
+def _hunter_quests(era_input: CmangosFacts, dropped: dict[str, int]) -> list[int]:
+    """Brief PT2: the quests is_hunter_quest says only some classes, the hunter among them, can
+    take, quest id ascending. A quest quest_template gives no title, or a scaffolding one, is
+    refused and counted under `hunterQuestUntitled`, because a quest the addon cannot title is a
+    row that says nothing."""
+    found: list[int] = []
+    for quest in sorted(era_input.quest_classes):
+        if not is_hunter_quest(era_input.quest_classes[quest]):
+            continue
+        title = era_input.quest_names.get(quest, "")
+        if not title or is_scaffolding(title):
+            dropped["hunterQuestUntitled"] += 1
+            continue
+        found.append(quest)
+    return found
+
+
+def _hunter_npcs(era_input: CmangosFacts, dropped: dict[str, int]) -> dict[str, int]:
+    """Brief PT15: every stable master and pet trainer NAME -> what it is (HS_STABLE_MASTER,
+    HS_PET_TRAINER, or both added together), name ascending.
+
+    A stable master is a creature with the NpcFlags stable master bit. A pet trainer is a creature
+    of TrainerType TRAINER_TYPE_PETS that teaches at least one spell through its npc_trainer rows
+    or its trainer template: the type alone also holds the warlock's Demon Trainers and a few
+    unused or quest only creatures, none of which teaches anything there. Keyed by the name, the
+    way `ck` and `st` are; a name is both where any creature of it is a stable master and any is a
+    pet trainer. A creature with no name or a scaffolding one is refused and counted under
+    `hunterNpcUnnamed`, and a pets type creature that teaches nothing under
+    `petTrainerTeachesNothing`.
+    """
+    teaching = {creature for creature, spells in trainer_creature_spells(era_input).items() if spells}
+    found: dict[str, int] = {}
+    for creature_id in sorted(era_input.creatures):
+        facts = era_input.creatures[creature_id]
+        kind = 0
+        if facts.stable_master:
+            kind |= HS_STABLE_MASTER
+        if facts.trainer_type == TRAINER_TYPE_PETS:
+            if creature_id in teaching:
+                kind |= HS_PET_TRAINER
+            else:
+                dropped["petTrainerTeachesNothing"] += 1
+        if not kind:
+            continue
+        if not facts.name or is_scaffolding(facts.name):
+            dropped["hunterNpcUnnamed"] += 1
+            continue
+        found[facts.name] = found.get(facts.name, 0) | kind
+    return dict(sorted(found.items()))
+
+
 def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
     """Turn the two pinned databases into EraSources.lua's table, counting every refusal.
 
@@ -4141,6 +4348,11 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         "questSpellScaffolding": 0,
         "questSkillUntitled": 0,
         "questSkillScaffolding": 0,
+        "tameUnnamed": 0,
+        "tameTestName": 0,
+        "hunterQuestUntitled": 0,
+        "hunterNpcUnnamed": 0,
+        "petTrainerTeachesNothing": 0,
     }
     counts: dict[str, int] = {
         "multiQuest": 0,
@@ -4257,6 +4469,17 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
     # of its own, with its kind, portrait, title and quest lists, even where it drops, sells and
     # trains nothing. Its kind stays a plain kind: `qg` is what says it gives quests.
     giver_names = _giver_names(era_input)
+    # Brief PT2 (2026-10-02): every tameable creature's name ships as a name of its own, with its
+    # kind and portrait (and the caller's pins), even where it drops, sells, trains and gives
+    # nothing, so the Pets tab can draw and map every beast a hunter can tame. A plain kind: `tb` is
+    # what says it.
+    tameables = _tameables(era_input, dropped)
+    tame_names = {facts.name for facts in tameables.values()}
+    # Brief PT15 (2026-10-02): every stable master's and pet trainer's name ships as a name of its
+    # own, with its kind, portrait and title (and the caller's pins and side), by the rules a
+    # trainer's follow. A plain kind: `hs` is what says it.
+    hunter_npcs = _hunter_npcs(era_input, dropped)
+    hunter_npc_names = set(hunter_npcs)
     npc_names = (
         creature_names
         | vendor_names
@@ -4264,6 +4487,8 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         | class_trainer_names
         | weapon_master_names
         | giver_names
+        | tame_names
+        | hunter_npc_names
     )
     kinds = _creature_kinds(era_input, npc_names, strings, counts)
     for index in kinds:
@@ -4320,6 +4545,7 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         | class_trainer_names
         | weapon_master_names
         | {strings.value(index) for index in givers}
+        | hunter_npc_names
     )
     subnames = _titles(era_input, titled_names, strings, counts, teachers)
     trainers = {strings.add(name): spells for name, spells in trainer_lists.items()}
@@ -4397,6 +4623,24 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
             by_string += 1
     counts["questTaughtTitlesByIndex"] = by_index
     counts["questTaughtTitlesByString"] = by_string
+    # Brief PT2: the hunter quests, each titled in qt where nothing above titled it. After the qr,
+    # qp and qs titles, so no title of theirs changes from a string to an index because of a hunter
+    # quest.
+    hunter_quests = _hunter_quests(era_input, dropped)
+    hunter_titled = 0
+    for quest in hunter_quests:
+        if quest not in handed_over and quest not in quest_titles:
+            quest_titles[quest] = strings.add(era_input.quest_names[quest])
+            hunter_titled += 1
+    started = {quest for starts, _ends in givers.values() for quest in starts}
+    ended = {quest for _starts, ends in givers.values() for quest in ends}
+    counts["hunterQuests"] = len(hunter_quests)
+    counts["hunterQuestTitlesAdded"] = hunter_titled
+    counts["hunterQuestsWithGiver"] = sum(1 for quest in hunter_quests if quest in started)
+    counts["hunterQuestsWithEnder"] = sum(1 for quest in hunter_quests if quest in ended)
+    # And the tameables' and hunter NPCs' own name indexes, remapped with `s` below.
+    tame_index = {creature_id: strings.add(facts.name) for creature_id, facts in tameables.items()}
+    hunter_npc_index = {strings.add(name): kind for name, kind in hunter_npcs.items()}
     # Brief QN1: the quests of one chain that share a title, numbered by chain position.
     chains = quest_chains(era_input.quest_names, era_input.quest_links, era_input.quest_ids)
     agree, disagree = chains.id_order_check()
@@ -4494,6 +4738,51 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         "objectGiver": frozenset(index_of[name] for name in object_giver_names),
     }
     object_names_out = {index_of[name]: category for name, category in object_names.items()}
+    # Briefs PT2 and PT15: the tameables packed with their remapped name indexes, and the hunter NPCs.
+    tameables_out = {
+        creature_id: pack_tame(
+            remap[tame_index[creature_id]], facts.family, facts.min_level, facts.max_level, facts.rank
+        )
+        for creature_id, facts in tameables.items()
+    }
+    tame_name_indexes = {remap[index] for index in tame_index.values()}
+    counts["tameables"] = len(tameables_out)
+    counts["tameNames"] = len(tame_name_indexes)
+    counts["tameNamesNew"] = len(
+        tame_names
+        - creature_names
+        - vendor_names
+        - trainer_names
+        - class_trainer_names
+        - weapon_master_names
+        - giver_names
+    )
+    counts["tameRare"] = sum(1 for facts in tameables.values() if facts.rank in (2, 4))
+    counts["tameElite"] = sum(1 for facts in tameables.values() if facts.rank in (1, 2))
+    counts["tameNotBeast"] = sum(1 for facts in tameables.values() if facts.creature_type != 1)
+    counts["tameNamesWithDisplay"] = sum(1 for index in displays if index in tame_name_indexes)
+    hunter_npcs_out = dict(sorted((remap[index], kind) for index, kind in hunter_npc_index.items()))
+    counts["hunterNpcs"] = len(hunter_npcs_out)
+    counts["stableMasters"] = sum(1 for kind in hunter_npcs_out.values() if kind & HS_STABLE_MASTER)
+    counts["petTrainers"] = sum(1 for kind in hunter_npcs_out.values() if kind & HS_PET_TRAINER)
+    counts["hunterNpcsBoth"] = sum(
+        1 for kind in hunter_npcs_out.values() if kind == HS_STABLE_MASTER | HS_PET_TRAINER
+    )
+    counts["hunterNpcsNew"] = len(
+        hunter_npc_names
+        - creature_names
+        - vendor_names
+        - trainer_names
+        - class_trainer_names
+        - weapon_master_names
+        - giver_names
+        - tame_names
+    )
+    counts["hunterNpcsWithDisplay"] = sum(1 for index in displays if index in hunter_npcs_out)
+    counts["hunterNpcsWithTitle"] = sum(1 for index in subnames if index in hunter_npcs_out)
+    # For the caller (EraPlaces.lua): the tameable names' pins, and the hunter NPCs' pins and side.
+    page_names["tame"] = frozenset(index_of[name] for name in tame_names)
+    page_names["hunterNpc"] = frozenset(index_of[name] for name in hunter_npc_names)
 
     # The lists, packed and then shared: the 184 vendors of one drink are the vendors of every
     # drink, so an identical list is written once and every item that opens it points at the
@@ -4567,6 +4856,9 @@ def derive(cmangos: CmangosOnly, selected: BuildFacts) -> EraSources:
         quest_provided={quest: pack_requires([pair]) for quest, pair in sorted(provided.items())},
         quest_taught={spell: pack_quests(quests) for spell, quests in taught.items()},
         required_skills=required_skills,
+        tameables=tameables_out,
+        hunter_quests=hunter_quests,
+        hunter_npcs=hunter_npcs_out,
         list_index={
             item: dict(sorted(by_kind_rows.items())) for item, by_kind_rows in sorted(list_index.items())
         },
@@ -4967,6 +5259,9 @@ def header_lines(table: EraSources) -> list[str]:
         + ("qp = { [questId] = the item it hands over when taken, packed }, " if table.quest_provided else "")
         + ("qs = { [spellId] = the quests that teach it, packed }, " if table.quest_taught else "")
         + ("rs = { [questId] = { skill line, rank } }, " if table.required_skills else "")
+        + ("tb = { [creatureId] = packed tameable }, " if table.tameables else "")
+        + ("qh = { questId, ... }, " if table.hunter_quests else "")
+        + ("hs = { [string index] = 1 stable master, 2 pet trainer, 3 both }, " if table.hunter_npcs else "")
         + "legend = { {field, type}, ... }, packed = 1, g = the Generated stamp above }",
         "r[itemId] is a LIST of rows, in the order to draw them: category ascending, best "
         "chance first inside a category, the summary row last. Never sort it. A herb or a vein "
@@ -5217,6 +5512,46 @@ def header_lines(table: EraSources) -> list[str]:
                 f"({counts.get('questRequiredSkillNoRank', 0)} with no rank).",
             ]
             if table.required_skills
+            else []
+        ),
+        *(
+            [
+                "tb: the beasts a hunter can tame (creature_template.CreatureTypeFlags bit 0x1, the only "
+                "flag read), keyed by creature ID, one integer each: name + "
+                f"{TM_NAME_SPAN} * (MinLevel + {TM_LEVEL_SPAN} * (Family + {TM_FAMILY_SPAN} * "
+                f"(MaxLevel less MinLevel + {TM_BAND_SPAN} * Rank))). name is the index into s, so ck "
+                "and cd of that name give its kind and portrait; every tameable name has a ck entry "
+                "and has cd where the source states a model (its pins are EraPlaces.lua's). Family and "
+                "the levels are this creature's own, not the name's. Rank: 0 normal, 1 elite, 2 rare "
+                "elite, 3 boss, 4 rare. Read with math.floor and %. "
+                f"{counts.get('tameables', 0)} tameable creatures in tb over {counts.get('tameNames', 0)} "
+                f"names ({counts.get('tameNamesNew', 0)} named for tb alone).",
+            ]
+            if table.tameables
+            else []
+        ),
+        *(
+            [
+                "qh: the hunter quests, quest id ascending: the class mask qa is read from (quest_template."
+                "RequiredClasses joined with a class ZoneOrSort) holds the hunter (mask 4) and leaves at "
+                "least one other class out, so a quest open to every class is never listed. Every quest "
+                "here is titled by a c=3 row or by qt; its givers and enders are the qg names whose lists "
+                f"hold it (creature givers only). {counts.get('hunterQuests', 0)} hunter quests in qh.",
+            ]
+            if table.hunter_quests
+            else []
+        ),
+        *(
+            [
+                "hs: the stable masters (creature_template.NpcFlags bit 0x2000, the only flag read) and "
+                "the pet trainers (TrainerType 3, the pets type, and teaching a spell through "
+                "npc_trainer), keyed by name like ck: 1 stable master, 2 pet trainer, 3 both. Every hs "
+                "name has a ck entry, and cd and st where the source states a model and a SubName (its "
+                f"pins and side are EraPlaces.lua's). {counts.get('stableMasters', 0)} stable masters "
+                f"and {counts.get('petTrainers', 0)} pet trainers in hs ({counts.get('hunterNpcsNew', 0)} "
+                "named for hs alone).",
+            ]
+            if table.hunter_npcs
             else []
         ),
         "x, xl: the rest of the list a summary row stands for, so it can be opened and "

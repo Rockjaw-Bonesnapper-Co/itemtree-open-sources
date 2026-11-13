@@ -8,7 +8,7 @@ in this repository.
 ## Upstream data
 
 - **QuestieDB**, [Questie/QuestieDB](https://github.com/Questie/QuestieDB), at commit
-  `4d31c10394b11bd133069ecf1662062cdf4d8691` (v1.0.12). It declares the GNU General Public License
+  `e19dfdf8528334ea63da0ecc4e291c134c0fc266` (v1.0.14). It declares the GNU General Public License
   version 3, with the caveats its own `LICENSE.md` sets out (content imported from Questie stays
   under Questie's licensing; where in doubt its historic content is to be considered all rights
   reserved; the GPL does not extend to the Questie name and logo). Its `LICENSE.md` and `gpl-3.0.md`
