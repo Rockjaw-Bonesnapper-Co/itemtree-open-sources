@@ -110,8 +110,8 @@ UPSTREAM_REPOSITORY = "github.com/Questie/QuestieDB"
 # The pin. `itemtree-data open-sources update` rewrites these two lines, PIN.content_sha256 and
 # PIN.notices in place on a re-pin (docs/open-sources.md, "Re-pinning"): keep each on its own line
 # in this shape.
-QUESTIEDB_COMMIT = "e19dfdf8528334ea63da0ecc4e291c134c0fc266"
-QUESTIEDB_VERSION = "v1.0.14"
+QUESTIEDB_COMMIT = "4dbb82440a27856f8dccf57094a5d792cdc7cc9b"
+QUESTIEDB_VERSION = "v1.1.1"
 
 # The files the composer reads are not a list of ours: they are derived from the upstream's own load
 # lists at the pinned commit (its TOC, its configuration's correction registry and its correction
@@ -145,7 +145,7 @@ PIN = Pin(
     commit=QUESTIEDB_COMMIT,
     version=QUESTIEDB_VERSION,
     archive_url=archive_url_for(QUESTIEDB_COMMIT),
-    content_sha256="aa3e6af8802780b32ca8e8e2c2c761618ebe875fa148d1e5160c5c3335832a85",
+    content_sha256="7ae8265de1598e45972efde82ea513a8f59dd25f5a15560153be5c2b99abd089",
     notices=(
         ("LICENSE.md", "d9937e385c401d234ef416b91f00290f8ea8e517f39ed4359aed99115770d8c9"),
         ("gpl-3.0.md", "cc5470feed66192387f06ae93aed0bd4fefae5a5fd7c1e54a4acf4ea64f1028b"),
@@ -512,8 +512,14 @@ SPEC_FIELDS = frozenset(
         "window",
         "generated",
         "options",
+        # Brief NC1 (v1.1.0's foreverQuestRelationTraces.lua): register.lua's band offset within a window,
+        # metadata of the load order alone; read and checked by _slot_order_agrees.
+        "slotOffset",
     }
 )
+# Brief NC1: register.lua's bands within a window, a generated file's below an authored one's; an entry's
+# slotOffset moves its band up that many slots, and its static functions take the slots after it.
+GENERATED_BAND, AUTHORED_BAND = 1, 10
 # The merge options the composer applies (each `true` when given).
 PROVIDER_OPTIONS = frozenset({"noNewEntries", "noOverwrites"})
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -875,6 +881,9 @@ def _provider(spec: dict, sequence: int) -> tuple[Provider, int]:
         raise UpstreamShapeError(
             f"the registry entry of {path} has a generated mark that is not true or false"
         )
+    slot = spec.get("slotOffset", 0)
+    if not isinstance(slot, int) or isinstance(slot, bool) or slot < 0:
+        raise UpstreamShapeError(f"the registry entry of {path} has a slot offset that is not a whole number")
     # register.WindowFor: an entry without a window under Forever/ falls to the Era window.
     window = spec.get("window", "Era")
     want_window, want_generated = LAYER_REGISTRY[layer]
@@ -887,12 +896,54 @@ def _provider(spec: dict, sequence: int) -> tuple[Provider, int]:
     return provider, sequence
 
 
+def _slot_order_agrees(specs: list[dict]) -> None:
+    """Brief NC1: an entry's slotOffset changes only the upstream's load order within its window
+    (register.lua: order[window .. "Static"] + band + function index, band GENERATED_BAND or
+    AUTHORED_BAND plus the offset, ties in registration order). The composer applies by layer, then
+    registry order, so an offset is read safely only where it orders the entry against every other entry
+    of its window and entity the way the composer does; an UpstreamShapeError (a stop) otherwise. Entries
+    without an offset are compared with an offset entry only, as before."""
+
+    def facts(sequence: int, spec: dict) -> tuple[int, str, str, int, int, int]:
+        path = CORRECTIONS + str(spec.get("file"))
+        layer = layer_of_path(path) or ""
+        band = (GENERATED_BAND if spec.get("generated") else AUTHORED_BAND) + int(spec.get("slotOffset") or 0)
+        window = spec.get("window", "Era")
+        return (
+            LAYERS.index(layer) if layer in LAYERS else -1,
+            str(window),
+            str(spec.get("datatype")),
+            band,
+            len(spec.get("static") or ()),
+            sequence,
+        )
+
+    entries = [facts(sequence, spec) for sequence, spec in enumerate(specs)]
+    for at, spec in enumerate(specs):
+        if not spec.get("slotOffset"):
+            continue
+        mine = entries[at]
+        for other in entries:
+            if other is mine or other[1] != mine[1] or other[2] != mine[2]:
+                continue
+            first, second = (other, mine) if (other[0], other[5]) < (mine[0], mine[5]) else (mine, other)
+            # The composer applies `first` whole before `second`: upstream must too, its last function's
+            # slot before the other's first (a tie goes to the earlier registration).
+            last, start = first[3] + first[4], second[3] + 1
+            if not (last < start or (last == start and first[5] < second[5])):
+                raise UpstreamShapeError(
+                    f"the registry entry of {CORRECTIONS + str(spec.get('file'))} has a slot offset that "
+                    "orders it otherwise than this composer applies it"
+                )
+
+
 def derive_plan(lists: Mapping[str, bytes]) -> Plan:
     """The composer's plan from the upstream's three load lists (LOAD_LISTS), read as text; any
     shape this reader does not know is an UpstreamShapeError (a stop)."""
     loaded = toc_forever_files(_text(lists, TOC_FILE))
     specs = _forever_specs(lists)
     providers = [_provider(spec, sequence) for sequence, spec in enumerate(specs)]
+    _slot_order_agrees(specs)
     by_path = {provider.path: (provider, sequence) for provider, sequence in providers}
     if len(by_path) != len(providers):
         raise UpstreamShapeError("the registry names one Forever correction file twice")
@@ -1130,6 +1181,14 @@ def _check_provider(provider: Provider, text: str) -> None:
 # ----- the composition --------------------------------------------------------------------------
 
 COMPOSER = "open_sources_compose.lua"
+# Brief SEC1F: the composer process's address space limit, twice its own hook's 2 GB (MEMORY_KB in
+# open_sources_compose.lua), so the hook's plain message comes first wherever it can.
+COMPOSER_ADDRESS_SPACE = 4 * 1024 * 1024 * 1024
+# Brief SEC1F: the hard memory stop behind the composer's count hook is set by the caller, which may
+# hand a function to run in the composer's process before it starts (a limit on its address space);
+# None runs it with the system's own limits. This module imports nothing for it, so the mirror stays
+# whole on its own.
+COMPOSER_PREEXEC = None
 LUA_VERSION = "Lua 5.4"
 ENTITIES = ("Quest", "Npc", "Item", "Object")
 # The fields the composer writes, per entity and kind. Nothing else may come back.
@@ -1416,6 +1475,8 @@ def compose(tree: UpstreamTree, *, leave_out: Iterable[str] = (), lua: str) -> C
             capture_output=True,
             timeout=900,
             check=False,
+            # Brief SEC1F: the hard memory stop behind the composer's own count hook.
+            preexec_fn=COMPOSER_PREEXEC,
         )
     except subprocess.TimeoutExpired as exc:
         raise OpenSourcesError("the composer ran past its time limit") from exc

@@ -23,7 +23,7 @@ the Questie name and logo, which are the Questie project's.
 
 > Open source quest and world data for WoW Forever, derived from QuestieDB
 > (github.com/Questie/QuestieDB), the Questie project's database, at commit
-> e19dfdf8528334ea63da0ecc4e291c134c0fc266 (v1.0.14). Ids and numbers, the names of the objects they
+> 4dbb82440a27856f8dccf57094a5d792cdc7cc9b (v1.1.1). Ids and numbers, the names of the objects they
 > name and of the creatures quest objectives name: which creature, object or item starts, ends or asks
 > for a quest, a quest's levels, sides,
 > classes, chain, required profession and whether it repeats, which creature or object drops an item,
@@ -71,9 +71,9 @@ One commit of QuestieDB, fixed by the constants at the top of `open_sources.py` 
 | what | value |
 | --- | --- |
 | repository | QuestieDB (GPL-3.0, with the caveats above) |
-| commit | `e19dfdf8528334ea63da0ecc4e291c134c0fc266` (v1.0.14) |
-| tarball | `https://github.com/Questie/QuestieDB/archive/e19dfdf8528334ea63da0ecc4e291c134c0fc266.tar.gz` |
-| content hash | `aa3e6af8802780b32ca8e8e2c2c761618ebe875fa148d1e5160c5c3335832a85` |
+| commit | `4dbb82440a27856f8dccf57094a5d792cdc7cc9b` (v1.1.1) |
+| tarball | `https://github.com/Questie/QuestieDB/archive/4dbb82440a27856f8dccf57094a5d792cdc7cc9b.tar.gz` |
+| content hash | `7ae8265de1598e45972efde82ea513a8f59dd25f5a15560153be5c2b99abd089` |
 | `LICENSE.md` | sha256 `d9937e385c401d234ef416b91f00290f8ea8e517f39ed4359aed99115770d8c9` |
 | `gpl-3.0.md` | sha256 `cc5470feed66192387f06ae93aed0bd4fefae5a5fd7c1e54a4acf4ea64f1028b` |
 

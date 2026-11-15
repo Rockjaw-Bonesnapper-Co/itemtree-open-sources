@@ -197,11 +197,20 @@ local HOST_STRING_INDEX = STRING_META.__index
 local SANDBOX_STRING_INDEX = {}
 
 -- The count hook fires every STEP instructions. One call of upstream code may take LIMIT_STEPS of
--- them (100 million instructions; the largest file, the creature base, takes 54 steps at the
--- pinned commit, so a loop that never ends stops in about a second) while the whole process holds
--- at most MEMORY_KB (2 GB; the composer peaks at about 350 MB at the pinned commit).
-local STEP = 10000
-local LIMIT_STEPS = 10000
+-- them (100 million instructions; the largest file, the creature base, takes about 540,000
+-- instructions at the pinned commit, so a loop that never ends stops in about a second) while the
+-- whole process holds at most MEMORY_KB (2 GB; the composer peaks at about 350 MB at the pinned
+-- commit).
+--
+-- Brief SEC1F (the SEC1 review's minor 11): STEP was 10,000, and memory is only looked at when the
+-- hook fires. A string joined to itself doubles in a few instructions, so 10,000 of them could ask
+-- for any amount before the next look. At 10 instructions a string can grow about sixteen fold
+-- between two looks at most, and the hook's cost stays small because upstream code is mostly
+-- table constructors. The hard stop is the address space limit open_sources.py sets on this
+-- process where the system enforces one (set by the caller). The steps this file reports per
+-- upstream file are now counts of 10 instructions.
+local STEP = 10
+local LIMIT_STEPS = 10000000
 local MEMORY_KB = 2 * 1024 * 1024
 
 local function run_limited(label, fn, ...)
