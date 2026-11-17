@@ -110,8 +110,8 @@ UPSTREAM_REPOSITORY = "github.com/Questie/QuestieDB"
 # The pin. `itemtree-data open-sources update` rewrites these two lines, PIN.content_sha256 and
 # PIN.notices in place on a re-pin (docs/open-sources.md, "Re-pinning"): keep each on its own line
 # in this shape.
-QUESTIEDB_COMMIT = "4dbb82440a27856f8dccf57094a5d792cdc7cc9b"
-QUESTIEDB_VERSION = "v1.1.1"
+QUESTIEDB_COMMIT = "e1652ce62113c152da682baf2d6fb85f1396bcfb"
+QUESTIEDB_VERSION = "v1.1.2"
 
 # The files the composer reads are not a list of ours: they are derived from the upstream's own load
 # lists at the pinned commit (its TOC, its configuration's correction registry and its correction
@@ -145,7 +145,7 @@ PIN = Pin(
     commit=QUESTIEDB_COMMIT,
     version=QUESTIEDB_VERSION,
     archive_url=archive_url_for(QUESTIEDB_COMMIT),
-    content_sha256="7ae8265de1598e45972efde82ea513a8f59dd25f5a15560153be5c2b99abd089",
+    content_sha256="30f6b8d00f29c37ce76a3cbbc5069ef23afcb9b0235d096c9f5bef5c7b729b69",
     notices=(
         ("LICENSE.md", "d9937e385c401d234ef416b91f00290f8ea8e517f39ed4359aed99115770d8c9"),
         ("gpl-3.0.md", "cc5470feed66192387f06ae93aed0bd4fefae5a5fd7c1e54a4acf4ea64f1028b"),
@@ -1517,6 +1517,8 @@ QUEST_SCALARS = (
 NPC_SCALARS = (("l", "minLevel"), ("L", "maxLevel"), ("z", "zoneID"), ("a", "friendlyToFaction"))
 # npcFlags as the file keeps them: vendor 4 and trainer 16 (the upstream's Forever flag values).
 NPC_FLAGS_KEPT = 4 | 16
+# Brief VN1: the vendor flag alone, for the vendors whose names `cn` carries (vendor_creatures).
+NPC_VENDOR = 4
 # Brief ST1: a quest's specialFlags as the file keeps them (`f`): the repeatable bit alone (the upstream's
 # specialFlags.REPEATABLE, 1). The owner's ruling of 2026-10-17 counts a repeatable quest but never lets it
 # keep an item, and nothing else tells the addon that a Forever quest repeats: Classic Era's repeatable
@@ -1872,14 +1874,35 @@ def check_targets(value: object) -> None:
                 raise GuardError(f"{OBJECTIVE_TARGETS_FIELD}.{letter}[{ident}] names an id below 1")
 
 
-def creature_names(composed: Composed, targets: Targets) -> tuple[dict[int, str], dict[str, int]]:
+def vendor_creatures(records: Mapping[str, Mapping[int, Mapping[str, object]]]) -> set[int]:
+    """Brief VN1 (QA item 656, the owner's ruling "A" of 2026-11-15): the creatures the file's own records
+    name as vendors: a creature record carrying the vendor flag (`n` `f` & NPC_VENDOR) and every creature an
+    item record's `v` lists. The file's own rows choose, so the set is a pure function of the pin."""
+    out = {
+        int(ident)
+        for ident, record in (records.get("n") or {}).items()
+        if int(record.get("f") or 0) & NPC_VENDOR
+    }  # type: ignore[call-overload]
+    for record in (records.get("i") or {}).values():
+        out.update(int(npc) for npc in record.get("v") or ())  # type: ignore[union-attr]
+    return out
+
+
+def creature_names(
+    composed: Composed, targets: Targets, vendors: Iterable[int] = ()
+) -> tuple[dict[int, str], dict[str, int]]:
     """Brief Q41, the owner's "Take" of 2026-11-10 (QuestieDB's creature names for the objective targets
     nothing of ours names): the upstream's English name of each creature a quest's objectives name (the
     targets' `c`), whichever layer stated it, held to the rule an object's name is (object_name_fault);
     and how many have none, by why. Names alone: no title (subName) or other text. The file's own targets
     choose, so it stays a pure function of the pin: whether a name of ours stands first is the addon's
-    order (its namer is asked last), never this writer's."""
-    named = sorted({ident for record in targets.quests.values() for ident in record.get("c", ())})  # type: ignore[attr-defined]
+    order (its namer is asked last), never this writer's. Brief VN1 (the owner's ruling "A" of 2026-11-15:
+    a page vendor no source of ours names may take its name from the QuestieDB data we ship): the vendors
+    the file's own records name (`vendor_creatures`) are named the same way."""
+    named = sorted(
+        {ident for record in targets.quests.values() for ident in record.get("c", ())}  # type: ignore[attr-defined]
+        | {int(ident) for ident in vendors}
+    )
     names: dict[int, str] = {}
     left: Counter[str] = Counter()
     for creature in named:
@@ -2029,7 +2052,7 @@ def select_facts(composed: Composed, layer_set: str) -> Selection:
     targets = objective_targets(composed)
     named_objects = {ident for record in targets.quests.values() for ident in record.get("o", ())}  # type: ignore[attr-defined]
     names, names_left = object_names(composed, records, named_objects)
-    creatures_named, creatures_left = creature_names(composed, targets)
+    creatures_named, creatures_left = creature_names(composed, targets, vendor_creatures(records))
     return Selection(
         layer_set,
         records,
@@ -2143,7 +2166,9 @@ OBJECTIVE_TARGETS_FIELD = "ot"
 # Brief Q41, the one key added beside `ot`: `cn`, creature id -> the upstream's English name, for the
 # creatures a quest's objectives name (creature_names). The owner, 2026-11-10: "Take" (QuestieDB's
 # creature names for the objective targets nothing of ours names, 117 at the pin), approving the key.
-# Creatures an objective names alone, names alone: no title, no other text.
+# Creatures an objective names alone, names alone: no title, no other text. Brief VN1 (the owner's ruling
+# "A" of 2026-11-15): and the vendors the file's own records name (vendor_creatures), so a page vendor no
+# source of ours names reads as QuestieDB's name.
 CREATURE_NAMES_FIELD = "cn"
 TOP_FIELDS = frozenset(
     {
@@ -2348,18 +2373,38 @@ def check_value(value: Mapping) -> None:
     if OBJECTIVE_TARGETS_FIELD in value:
         check_targets(value[OBJECTIVE_TARGETS_FIELD])
     # Brief Q41 (the owner's "Take"): creature id -> a name that passes the object names' rule, and only
-    # for a creature the objective targets name.
+    # for a creature the objective targets name or (brief VN1) the file's own records name as a vendor.
     creatures = value.get(CREATURE_NAMES_FIELD) or {}
     if not isinstance(creatures, Mapping):
         raise GuardError(f"{CREATURE_NAMES_FIELD} is not creature id to name")
     targeted = _targeted_creatures(value.get(OBJECTIVE_TARGETS_FIELD))
+    if creatures and any(ident not in targeted for ident in creatures):
+        targeted |= _named_vendors(value)
     for ident, name in creatures.items():
         if not isinstance(ident, int) or isinstance(ident, bool) or ident < 1 or not isinstance(name, str):
             raise GuardError(f"{CREATURE_NAMES_FIELD} holds a row that is not creature id to name")
         if object_name_fault(name) is not None:
             raise GuardError(f"{CREATURE_NAMES_FIELD}[{ident}] holds something other than a plain name")
         if ident not in targeted:
-            raise GuardError(f"{CREATURE_NAMES_FIELD}[{ident}] names a creature no objective names")
+            raise GuardError(
+                f"{CREATURE_NAMES_FIELD}[{ident}] names a creature no objective or vendor record names"
+            )
+
+
+def _named_vendors(value: Mapping) -> set[int]:
+    """Brief VN1: the creatures the module value's own packed records name as vendors (vendor_creatures
+    over the decoded `n` and `i` records), or none where they do not decode."""
+    legend, signed = value.get("legend"), value.get("signed") or {}
+    if not isinstance(legend, Mapping):
+        return set()
+    records: dict[str, dict[int, dict[str, object]]] = {"n": {}, "i": {}}
+    for letter in ("n", "i"):
+        for ident, text in (value.get(letter) or {}).items():
+            try:
+                records[letter][int(ident)] = unpack_record(letter, text, legend, signed)
+            except (OpenSourcesError, KeyError, TypeError, ValueError):
+                continue
+    return vendor_creatures(records)
 
 
 def _targeted_creatures(targets: object) -> set[int]:
@@ -2622,7 +2667,8 @@ def header_lines(table: OpenSources, *, generated: str, version: str) -> list[st
         "each named creature and object the upstream places: s one segment per zone, the most "
         "spawns first, with its one point where the zone holds one spawn and none where it "
         f"holds more. {CREATURE_NAMES_FIELD}: the upstream's English name of each creature a quest's "
-        "objectives name (ot's c), a missing name or a placeholder left out.",
+        "objectives name (ot's c) or this file's own records name as a vendor (n f 4, i v), a missing "
+        "name or a placeholder left out.",
         f"Layers: {table.layer_set}, {LAYER_WORDS[table.layer_set]}. A creature drop list longer than "
         f"{MASS_DROPPERS} is a world drop and is left out whole.",
         CREDIT,
