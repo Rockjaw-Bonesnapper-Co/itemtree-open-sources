@@ -5036,7 +5036,16 @@ def quest_chains(
     linked to none of the others is not numbered: that is the zone suffix's case, the addon's.
     Pure.
     """
-    succ = quest_successors(links, quest_ids, names)
+    return chains_by_title(names, quest_successors(links, quest_ids, names))
+
+
+def chains_by_title(names: Mapping[int, str], succ: Mapping[int, Collection[int]]) -> QuestChains:
+    """quest_chains' numbering over any successor map, questId -> the quests that come after it (brief
+    711b: QuestsPredicted's chain links number the Forever same titled chains by this same rule). Two
+    quests of one title are in one chain when either reaches the other through `succ`, whatever titles
+    stand between them; a quest's position is the longest run of its same titled chain mates that lead to
+    it; a same titled quest linked to none of the others, and a group whose links loop, are not numbered.
+    Pure."""
 
     def reach(start: int) -> set[int]:
         seen: set[int] = set()
